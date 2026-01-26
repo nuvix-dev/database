@@ -323,7 +323,7 @@ export class Doc<
     const permissions: (string | Permission)[] = this.get(
       "$permissions",
       [],
-    ) as any;
+    ) as (string | Permission)[];
 
     return Array.from(
       new Set(
@@ -535,6 +535,9 @@ export class Doc<
         output[key as string] = value;
       }
     }
+    if (!disallow.includes("$permissions")) {
+      output["$permissions"] = this.getPermissions();
+    }
     return output as T;
   }
 
@@ -577,15 +580,41 @@ export class Doc<
         return chalk.green(
           `[${value.map((item) => formatValue(item, depth + 1)).join(", ")}]`,
         );
+      } else if (typeof value === "function") {
+        return chalk.gray("[Function]");
+      } else if (typeof value === "undefined") {
+        return chalk.gray("undefined");
       } else if (typeof value === "object" && value !== null) {
-        const indent = "  ".repeat(depth + 1);
-        const entries = Object.entries(value)
-          .map(
-            ([key, val]) =>
-              `${indent}${chalk.yellow(key)}: ${formatValue(val, depth + 1)}`,
-          )
-          .join(",\n");
-        return `{\n${entries}\n${"  ".repeat(depth)}}`;
+        // Only treat as object literal if prototype is Object
+        if (Object.getPrototypeOf(value) === Object.prototype) {
+          if (Object.keys(value).length === 0) {
+            return chalk.gray("{}");
+          }
+          const indent = "  ".repeat(depth + 1);
+          const entries = Object.entries(value)
+            .map(
+              ([key, val]) =>
+                `${indent}${chalk.yellow(key)}: ${formatValue(val, depth + 1)}`,
+            )
+            .join(",\n");
+          return `{
+${entries}
+${"  ".repeat(depth)}}`;
+        } else {
+          // It's a class instance, check for toString or toJSON
+          if (typeof value.toJSON === "function") {
+            return chalk.gray(`[toJSON: ${JSON.stringify(value.toJSON())}]`);
+          } else if (
+            typeof value.toString === "function" &&
+            value.toString !== Object.prototype.toString
+          ) {
+            return chalk.gray(`[toString: ${value.toString()}]`);
+          } else {
+            return chalk.gray(
+              `[instance of ${(value as any).constructor?.name || "Unknown"}]`,
+            );
+          }
+        }
       } else if (typeof value === "string") {
         return chalk.magenta(`"${value}"`);
       } else if (typeof value === "number") {

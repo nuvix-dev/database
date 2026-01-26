@@ -198,6 +198,13 @@ function generateEnumType(attr: Attribute): string {
 function generateBasicType(attr: Attribute): string {
   let baseType = typeMap[attr.type as AttributeEnum] ?? "any";
 
+  if (
+    (attr.type === AttributeEnum.Json || attr.type === AttributeEnum.Virtual) &&
+    attr.__type
+  ) {
+    baseType = attr.__type;
+  }
+
   // Add more specific types based on format options
   if (attr.type === AttributeEnum.String && attr.formatOptions) {
     if (attr.formatOptions["pattern"]) {

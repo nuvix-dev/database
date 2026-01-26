@@ -27,6 +27,7 @@ export type Attribute = {
   formatOptions?: Record<string, any>;
   default?: any;
   options?: AttributeOptions | Record<string, any>;
+  __type?: string; // internal use only
 };
 
 export type Index = {
