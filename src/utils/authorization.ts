@@ -78,7 +78,7 @@ export class Authorization implements Validator {
       }
     }
 
-    this.message = `Missing "${this.action}" permission for role "${lastPermission}". Only "${JSON.stringify(authorizedRoles)}" scopes are allowed and "${JSON.stringify(permissions)}" was given.`;
+    this.message = `Missing "${this.action}" permission for role "${lastPermission}". Only "${JSON.stringify(permissions)}" scopes are allowed and "${JSON.stringify(authorizedRoles)}" was given.`;
     return false;
   }
 

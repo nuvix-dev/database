@@ -367,12 +367,11 @@ export abstract class BaseAdapter extends EventEmitter {
     min,
     max,
   }: IncreaseDocumentAttribute): Promise<boolean> {
-    const name = this.quote(collection);
     const attr = this.quote(attribute);
     const params: any[] = [value, updatedAt, id];
 
     let sql = `
-            UPDATE ${this.getSQLTable(name)} 
+            UPDATE ${this.getSQLTable(collection)} 
             SET 
                 ${attr} = ${attr} + ?,
                 ${this.quote("_updatedAt")} = ?
