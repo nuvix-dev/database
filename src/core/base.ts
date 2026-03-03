@@ -432,12 +432,24 @@ export abstract class Base<
     }
   }
 
-  public async withTransaction<T>(callback: () => Promise<T>): Promise<T> {
-    return this.adapter.$client.transaction(callback);
+  async withTransaction<T>(
+    callback: (txDatabase: this) => Promise<T>,
+  ): Promise<T> {
+    return await this.adapter.transaction(async (txAdapter) => {
+      if (this.adapter === txAdapter) {
+        return await callback(this);
+      }
+
+      const txDatabase = Object.create(Object.getPrototypeOf(this));
+      Object.assign(txDatabase, this);
+      txDatabase.adapter = txAdapter;
+
+      return await callback(txDatabase);
+    });
   }
 
   public get ping() {
-    return this.adapter.$client.ping;
+    return this.adapter.ping();
   }
 
   protected getJunctionTable(

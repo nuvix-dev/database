@@ -400,20 +400,20 @@ export class Database extends Cache {
         (attribute) => attribute.get("type") === AttributeEnum.Relationship,
       );
 
-    return await this.withTransaction(async () => {
+    return await this.withTransaction(async (db) => {
       for (const relationship of relationships) {
-        await this.deleteRelationship(
+        await db.deleteRelationship(
           collection.getId(),
           relationship.get("$id"),
         );
       }
 
       try {
-        await this.adapter.deleteCollection(id);
+        await db.adapter.deleteCollection(id);
       } catch (error) {
         if (error instanceof NotFoundException) {
           // HACK: Metadata should still be updated, can be removed when null tenant collections are supported.
-          if (!this.adapter.$sharedTables || !this.migrating) {
+          if (!db.adapter.$sharedTables || !this.migrating) {
             throw error;
           }
         } else {
@@ -425,12 +425,13 @@ export class Database extends Cache {
       if (id === Database.METADATA) {
         deleted = true;
       } else {
-        deleted = await this.silent(() =>
-          this.deleteDocument(Database.METADATA, id),
+        deleted = await db.silent(() =>
+          db.deleteDocument(Database.METADATA, id),
         );
       }
 
       if (deleted) {
+        // todo:
         this.trigger(EventsEnum.CollectionDelete, collection);
       }
 
@@ -1150,13 +1151,13 @@ export class Database extends Cache {
 
     await this.silent(async () => {
       try {
-        await this.withTransaction(async () => {
-          await this.updateDocument(
+        await this.withTransaction(async (db) => {
+          await db.updateDocument(
             Database.METADATA,
             collection.getId(),
             collection,
           );
-          await this.updateDocument(
+          await db.updateDocument(
             Database.METADATA,
             relatedCollection.getId(),
             relatedCollection,
@@ -1495,13 +1496,13 @@ export class Database extends Cache {
 
     await this.silent(async () => {
       try {
-        await this.withTransaction(async () => {
-          await this.updateDocument(
+        await this.withTransaction(async (db) => {
+          await db.updateDocument(
             Database.METADATA,
             collection.getId(),
             collection,
           );
-          await this.updateDocument(
+          await db.updateDocument(
             Database.METADATA,
             relatedCollection.getId(),
             relatedCollection,
@@ -2037,9 +2038,9 @@ export class Database extends Cache {
       throw new StructureException(structure.$description);
     }
 
-    const result = await this.withTransaction(async () => {
-      doc = await this.silent(() => this.createRelationships(collection, doc));
-      return this.adapter.createDocument(collection.getId(), doc);
+    const result = await this.withTransaction(async (db) => {
+      doc = await this.silent(() => db.createRelationships(collection, doc));
+      return db.adapter.createDocument(collection.getId(), doc);
     });
 
     const castedResult = this.cast(collection, result);
@@ -2353,16 +2354,11 @@ export class Database extends Cache {
       createdDocuments.push(doc);
     }
 
-    const updatedDocuments = await this.withTransaction(async () => {
+    const updatedDocuments = await this.withTransaction(async (db) => {
       const resolvedDocuments = await Promise.all(
-        createdDocuments.map((doc) =>
-          this.createRelationships(collection, doc),
-        ),
+        createdDocuments.map((doc) => db.createRelationships(collection, doc)),
       );
-      return this.adapter.createDocuments(
-        collection.getId(),
-        resolvedDocuments,
-      );
+      return db.adapter.createDocuments(collection.getId(), resolvedDocuments);
     });
     const castedDocuments = updatedDocuments.map((doc) =>
       this.cast(collection, doc),
@@ -2402,10 +2398,10 @@ export class Database extends Cache {
       this.getCollection(collectionId),
     );
     const newUpdatedAt = document.updatedAt();
-    const updatedDocument = await this.withTransaction(async () => {
+    const updatedDocument = await this.withTransaction(async (db) => {
       const time = new Date().toISOString();
       const old = await this.silent(() =>
-        this.getDocument(collection.getId(), id, [], true),
+        db.getDocument(collection.getId(), id, [], true),
       );
 
       if (old.empty()) {
@@ -2438,7 +2434,7 @@ export class Database extends Cache {
             : createdAt,
       };
 
-      if (this.adapter.$sharedTables) {
+      if (db.adapter.$sharedTables) {
         mergedDocument["$tenant"] = old.get("$tenant");
       }
 
@@ -2500,20 +2496,17 @@ export class Database extends Cache {
         throw new StructureException(structureValidator.$description);
       }
 
-      const encodedDocument = await this.encode(collection, doc);
+      const encodedDocument = await db.encode(collection, doc);
 
       if (relationships.length > 0) {
-        doc = await this.updateDocumentRelationships(
-          collection,
-          encodedDocument,
-        );
+        doc = await db.updateDocumentRelationships(collection, encodedDocument);
       }
-      await this.adapter.updateDocument(
+      await db.adapter.updateDocument(
         collection.getId(),
         doc as Doc<IEntity>,
         skipPermissionsUpdate,
       );
-      await this.purgeCachedDocument(collection.getId(), encodedDocument);
+      await db.purgeCachedDocument(collection.getId(), encodedDocument);
 
       return encodedDocument;
     });
@@ -2846,7 +2839,7 @@ export class Database extends Cache {
       const currentPermissions = encodedUpdates.getPermissions();
       currentPermissions.sort();
 
-      await this.withTransaction(async () => {
+      await this.withTransaction(async (db) => {
         const processedBatch: Doc<any>[] = [];
 
         for (let index = 0; index < batch.length; index++) {
@@ -2868,7 +2861,7 @@ export class Database extends Cache {
 
           document.set("$skipPermissionsUpdate", skipPermissionsUpdate);
           const newDocument = await this.silent(() =>
-            this.updateDocumentRelationships(collection, document),
+            db.updateDocumentRelationships(collection, document),
           );
 
           const merged = new Doc({
@@ -2884,11 +2877,11 @@ export class Database extends Cache {
             );
           }
 
-          const encodedDocument = await this.encode(collection, merged);
+          const encodedDocument = await db.encode(collection, merged);
           processedBatch.push(encodedDocument);
         }
 
-        await this.adapter.updateDocuments(
+        await db.adapter.updateDocuments(
           collection.getId(),
           encodedUpdates,
           processedBatch,
@@ -2955,9 +2948,9 @@ export class Database extends Cache {
     );
 
     let document!: Doc;
-    const deleted = await this.withTransaction(async () => {
+    const deleted = await this.withTransaction(async (db) => {
       document = await Authorization.skip(() =>
-        this.silent(() => this.getDocument(collection.getId(), id, [], true)),
+        this.silent(() => db.getDocument(collection.getId(), id, [], true)),
       );
 
       if (document.empty()) {
@@ -2987,14 +2980,14 @@ export class Database extends Cache {
       }
 
       await this.silent(() =>
-        this.deleteDocumentRelationships(collection, document),
+        db.deleteDocumentRelationships(collection, document),
       );
-      const result = await this.adapter.deleteDocument(
+      const result = await db.adapter.deleteDocument(
         collection.getId(),
         document,
       );
 
-      await this.purgeCachedDocument(collection.getId(), id);
+      await db.purgeCachedDocument(collection.getId(), id);
 
       return result;
     });
@@ -3022,18 +3015,18 @@ export class Database extends Cache {
       queries = query(new QueryBuilder()).build();
     } else queries = query ?? [];
 
-    const deletedIds = await this.withTransaction(async () => {
-      const processedQueries = await this.processQueries(queries, collection, {
+    const deletedIds = await this.withTransaction(async (db) => {
+      const processedQueries = await db.processQueries(queries, collection, {
         forPermission: PermissionEnum.Delete,
       });
-      const result = await this.adapter.deleteDocuments(
+      const result = await db.adapter.deleteDocuments(
         collection.getId(),
         processedQueries,
       );
       for (const id of result) {
-        await this.purgeCachedDocument(collection.getId(), id);
-        await this.silent(() =>
-          this.deleteDocumentRelationships(
+        await db.purgeCachedDocument(collection.getId(), id);
+        await db.silent(() =>
+          db.deleteDocumentRelationships(
             collection,
             new Doc({
               $id: id,
@@ -3163,7 +3156,7 @@ export class Database extends Cache {
       const sequences: number[] = [];
       const permissionIds: string[] = [];
 
-      await this.withTransaction(async () => {
+      await this.withTransaction(async (db) => {
         for (const document of batch) {
           sequences.push(document.getSequence());
           if (document.getPermissions().length > 0) {
@@ -3172,7 +3165,7 @@ export class Database extends Cache {
 
           if (this.resolveRelationships) {
             await this.silent(() =>
-              this.deleteDocumentRelationships(collection, document),
+              db.deleteDocumentRelationships(collection, document),
             );
           }
 
@@ -3185,7 +3178,7 @@ export class Database extends Cache {
           }
         }
 
-        await this.adapter.deleteDocumentsBySequences(
+        await db.adapter.deleteDocumentsBySequences(
           collection.getId(),
           sequences,
           permissionIds,
@@ -3626,9 +3619,9 @@ export class Database extends Cache {
     }
 
     for (const chunk of chunks) {
-      const batch = await this.withTransaction(() =>
+      const batch = await this.withTransaction((db) =>
         Authorization.skip(() =>
-          this.adapter.createOrUpdateDocuments(
+          db.adapter.createOrUpdateDocuments(
             collection.getId(),
             attribute,
             chunk,
@@ -3721,9 +3714,9 @@ export class Database extends Cache {
       );
     }
 
-    const document = await this.withTransaction(async () => {
+    const document = await this.withTransaction(async (db) => {
       const doc = await Authorization.skip(() =>
-        this.silent(() => this.getDocument(collection.getId(), id, [], true)),
+        db.silent(() => db.getDocument(collection.getId(), id, [], true)),
       );
 
       if (doc.empty()) {
@@ -3757,7 +3750,7 @@ export class Database extends Cache {
         !updatedAt || !this.preserveDates ? time : updatedAt;
       const maxValue = max !== undefined ? max - value : undefined;
 
-      await this.adapter.increaseDocumentAttribute({
+      await db.adapter.increaseDocumentAttribute({
         collection: collection.getId(),
         id,
         attribute,
@@ -3813,9 +3806,9 @@ export class Database extends Cache {
       );
     }
 
-    const document = await this.withTransaction(async () => {
+    const document = await this.withTransaction(async (db) => {
       const doc = await Authorization.skip(() =>
-        this.silent(() => this.getDocument(collection.getId(), id, [], true)),
+        db.silent(() => db.getDocument(collection.getId(), id, [], true)),
       );
 
       if (doc.empty()) {
@@ -3845,11 +3838,10 @@ export class Database extends Cache {
 
       const time = new Date().toISOString();
       const updatedAt = doc.get("$updatedAt");
-      const finalUpdatedAt =
-        !updatedAt || !this.preserveDates ? time : updatedAt;
+      const finalUpdatedAt = !updatedAt || !db.preserveDates ? time : updatedAt;
       const minValue = min !== undefined ? min + value : undefined;
 
-      await this.adapter.increaseDocumentAttribute({
+      await db.adapter.increaseDocumentAttribute({
         collection: collection.getId(),
         id,
         attribute,

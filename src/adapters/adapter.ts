@@ -1,6 +1,6 @@
-import type { Client, Pool, PoolConfig } from "pg";
+import type { Pool } from "pg";
 import { BaseAdapter } from "./base.js";
-import { PostgresClient } from "./postgres.js";
+import { PostgresClient, Transaction } from "./postgres.js";
 import {
   AttributeEnum,
   EventsEnum,
@@ -22,11 +22,14 @@ import {
 } from "./types.js";
 
 export class Adapter extends BaseAdapter {
-  protected client: PostgresClient;
+  protected client: PostgresClient | Transaction;
 
-  constructor(client: PoolConfig | Client | Pool) {
+  constructor(pool: Pool | PostgresClient | Transaction) {
     super();
-    this.client = new PostgresClient(client);
+    this.client =
+      pool instanceof PostgresClient || pool instanceof Transaction
+        ? pool
+        : new PostgresClient(pool);
   }
 
   async create(name: string): Promise<void> {
@@ -250,21 +253,28 @@ export class Adapter extends BaseAdapter {
     );
 
     try {
-      await this.$client.transaction(async () => {
-        await this.client.query(tableSql);
+      const callback = async (tx: Transaction | PostgresClient) => {
+        await tx.query(tableSql);
         for (const sql of postTableIndexes) {
-          await this.client.query(sql);
+          await tx.query(sql);
         }
 
         for (const sql of indexSql) {
-          await this.client.query(sql);
+          await tx.query(sql);
         }
 
-        await this.client.query(permissionsTable);
+        await tx.query(permissionsTable);
         for (const sql of postPermissionsTableIndexes) {
-          await this.client.query(sql);
+          await tx.query(sql);
         }
-      });
+      };
+
+      const client = this.$client;
+      if (client.__type === "postgres") {
+        await client.transaction(callback);
+      } else {
+        callback(client);
+      }
     } catch (error) {
       this.processException(error);
     }
@@ -1615,5 +1625,12 @@ export class Adapter extends BaseAdapter {
         `Failed to execute deep find query for collection '${collection}'`,
       );
     }
+  }
+
+  protected createTransactionAdapter(client: any): this {
+    const adapter = new (this.constructor as any)(client) as this;
+    adapter._meta = this._meta;
+    adapter.$logger = this.$logger;
+    return adapter;
   }
 }

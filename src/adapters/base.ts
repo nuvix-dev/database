@@ -1,5 +1,4 @@
 import { DatabaseException } from "@errors/base.js";
-import { IClient } from "./interface.js";
 import {
   AttributeEnum,
   EventsEnum,
@@ -29,11 +28,12 @@ import {
 } from "@errors/index.js";
 import { createHash } from "crypto";
 import { EventEmitter } from "events";
+import type { PostgresClient, Transaction } from "./postgres.js";
 
 export abstract class BaseAdapter extends EventEmitter {
   public readonly type: string = "base";
   protected _meta: Partial<Meta> = { schema: "public" };
-  protected abstract client: IClient;
+  protected abstract client: PostgresClient | Transaction;
   protected $logger = new Logger();
 
   protected $timeout: number = 0;
@@ -80,11 +80,12 @@ export abstract class BaseAdapter extends EventEmitter {
   }
 
   public get $database(): string {
-    if (!this.client.$database)
+    const database = this.client.getPool().options.database;
+    if (!database)
       throw new DatabaseException(
         "Database name is not defined in client metadata.",
       );
-    return this.client.$database;
+    return database;
   }
 
   public get $schema(): string {
@@ -195,7 +196,8 @@ export abstract class BaseAdapter extends EventEmitter {
   }
 
   public async ping(): Promise<void> {
-    return await this.client.ping();
+    if (this.$client.__type === "postgres") return this.$client.ping();
+    else throw new DatabaseException("Cannot ping in transaction.");
   }
 
   /**
@@ -2056,6 +2058,23 @@ export abstract class BaseAdapter extends EventEmitter {
       params,
     };
   }
+
+  public async transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> {
+    return await this.client.transaction(async (newClient) => {
+      // If it's a nested call, newClient is the same Transaction instance
+      if (this.client === newClient) {
+        return await callback(this);
+      }
+
+      // If it's the first call, we clone the adapter
+      const txAdapter = Object.create(Object.getPrototypeOf(this));
+      Object.assign(txAdapter, this);
+      txAdapter.client = newClient;
+      return await callback(txAdapter);
+    });
+  }
+
+  protected abstract createTransactionAdapter(client: any): this;
 }
 
 export interface Meta {
