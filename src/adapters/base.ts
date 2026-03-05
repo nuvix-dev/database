@@ -1803,7 +1803,7 @@ export abstract class BaseAdapter extends EventEmitter {
     let columnRef: string | undefined;
 
     // Handle JSON path operators (->, ->>)
-    if (dbKey.includes("->") || dbKey.includes("->>")) {
+    if (dbKey.includes("->>") || dbKey.includes("->")) {
       const parts = dbKey.split(/(->>|->)/);
       const mainColumn = parts[0]!;
       const sanitizedMainColumn = this.sanitize(mainColumn);

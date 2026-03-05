@@ -163,10 +163,10 @@ export class Filter extends Base {
    * @returns {boolean} True if the attribute is valid, false otherwise.
    */
   protected validateAttributeSchema(attribute: string): boolean {
-    if (attribute.includes("->") && !this.schema[attribute]) {
-      attribute = attribute.split("->")[0]!;
-    } else if (attribute.includes("->>") && !this.schema[attribute]) {
+    if (attribute.includes("->>") && !this.schema[attribute]) {
       attribute = attribute.split("->>")[0]!;
+    } else if (attribute.includes("->") && !this.schema[attribute]) {
+      attribute = attribute.split("->")[0]!;
     }
     const attributeSchema = this.schema[attribute!];
     if (!attributeSchema) {
@@ -229,10 +229,10 @@ export class Filter extends Base {
       return false;
     }
 
-    if (attribute.includes("->") && !this.schema[attribute]) {
-      attribute = attribute.split("->")[0]!;
-    } else if (attribute.includes("->>") && !this.schema[attribute]) {
+    if (attribute.includes("->>") && !this.schema[attribute]) {
       attribute = attribute.split("->>")[0]!;
+    } else if (attribute.includes("->") && !this.schema[attribute]) {
+      attribute = attribute.split("->")[0]!;
     }
 
     const attributeSchema = this.schema[attribute]!;
