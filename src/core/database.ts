@@ -53,6 +53,9 @@ import { IndexDependency } from "@validators/index-dependency.js";
 import { MethodType } from "@validators/query/base.js";
 
 export class Database extends Cache {
+  private static readonly NUMERIC_ATTRIBUTE_TYPES: ReadonlySet<AttributeEnum> =
+    new Set([AttributeEnum.Integer, AttributeEnum.Float]);
+
   constructor(
     adapter: Adapter,
     cache: NuvixCache,
@@ -2084,8 +2087,8 @@ export class Database extends Cache {
 
       // Prevent infinite recursion
       const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.includes(loopKey)) continue;
-      this._relationStack.push(loopKey);
+      if (this._relationStack.has(loopKey)) continue;
+      this._relationStack.add(loopKey);
 
       try {
         if (
@@ -2165,7 +2168,7 @@ export class Database extends Cache {
           document.delete(relationship.get("key"));
         }
       } finally {
-        this._relationStack.pop();
+        this._relationStack.delete(loopKey);
       }
     }
     return document;
@@ -2244,8 +2247,8 @@ export class Database extends Cache {
         ),
       );
 
-      const foundIds = relatedDocs.map((d) => d.getId());
-      const missingIds = uniqueTargetIds.filter((id) => !foundIds.includes(id));
+      const foundIdsSet = new Set(relatedDocs.map((d) => d.getId()));
+      const missingIds = uniqueTargetIds.filter((id) => !foundIdsSet.has(id));
 
       if (missingIds.length > 0) {
         throw new RelationshipException(
@@ -2565,8 +2568,8 @@ export class Database extends Cache {
 
       // Prevent infinite recursion
       const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.includes(loopKey)) continue;
-      this._relationStack.push(loopKey);
+      if (this._relationStack.has(loopKey)) continue;
+      this._relationStack.add(loopKey);
 
       try {
         if (
@@ -2716,7 +2719,7 @@ export class Database extends Cache {
           }
         }
       } finally {
-        this._relationStack.pop();
+        this._relationStack.delete(loopKey);
       }
     }
     return document;
@@ -3288,13 +3291,13 @@ export class Database extends Cache {
       if (!relatedCollectionId) continue;
 
       const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.includes(loopKey)) continue;
-      this._relationStack.push(loopKey);
+      if (this._relationStack.has(loopKey)) continue;
+      this._relationStack.add(loopKey);
 
       try {
         await this.handleOnDelete(collection, document, relationship, options);
       } finally {
-        this._relationStack.pop();
+        this._relationStack.delete(loopKey);
       }
     }
   }
@@ -3776,9 +3779,7 @@ export class Database extends Cache {
       throw new NotFoundException("Attribute not found");
     }
 
-    const whiteList = [AttributeEnum.Integer, AttributeEnum.Float];
-
-    if (!whiteList.includes(attr.get("type")) || attr.get("array")) {
+    if (!Database.NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) || attr.get("array")) {
       throw new DatabaseException(
         "Attribute must be an integer or float and can not be an array.",
       );
@@ -3882,9 +3883,7 @@ export class Database extends Cache {
       throw new NotFoundException("Attribute not found");
     }
 
-    const whiteList = [AttributeEnum.Integer, AttributeEnum.Float];
-
-    if (!whiteList.includes(attr.get("type")) || attr.get("array")) {
+    if (!Database.NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) || attr.get("array")) {
       throw new DatabaseException(
         "Attribute must be an integer or float and can not be an array.",
       );

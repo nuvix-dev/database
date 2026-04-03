@@ -61,6 +61,10 @@ export class Query {
   public static readonly TYPES: QueryType[] = Object.values(QueryType);
   public static readonly DEFAULT_ALIAS = "main";
 
+  private static readonly TYPES_SET: ReadonlySet<string> = new Set(
+    Object.values(QueryType),
+  );
+
   protected static readonly LOGICAL_TYPES = [
     QueryType.And,
     QueryType.Or,
@@ -210,7 +214,7 @@ export class Query {
    * @returns {boolean} True if the value is a valid QueryType, false otherwise.
    */
   public static isMethod(value: string): value is QueryType {
-    return Query.TYPES.includes(value as QueryType);
+    return Query.TYPES_SET.has(value);
   }
 
   /**
@@ -270,11 +274,7 @@ export class Query {
         );
       }
 
-      if (
-        Query.LOGICAL_TYPES.includes(
-          method as (typeof Query.LOGICAL_TYPES)[number],
-        )
-      ) {
+      if (method === QueryType.And || method === QueryType.Or) {
         values = rawValues.map((val, index) => {
           if (typeof val !== "object" || val === null) {
             throw new QueryException(
@@ -344,10 +344,10 @@ export class Query {
    * @returns {Query | undefined} The first found cursor query, or undefined if none is found.
    */
   public static findCursor(queries: Query[]): Query | undefined {
-    return queries.find((query) =>
-      [QueryType.CursorAfter, QueryType.CursorBefore].includes(
-        query.getMethod(),
-      ),
+    return queries.find(
+      (query) =>
+        query.getMethod() === QueryType.CursorAfter ||
+        query.getMethod() === QueryType.CursorBefore,
     );
   }
 
@@ -637,8 +637,9 @@ export class Query {
         "Invalid QueryType provided in types array for getByType.",
       );
     }
+    const typesSet = new Set(types);
     return queries
-      .filter((query) => types.includes(query.getMethod()))
+      .filter((query) => typesSet.has(query.getMethod()))
       .map((query) => query.clone());
   }
 
@@ -736,9 +737,7 @@ export class Query {
    * @returns {boolean} True if the query is a logical operator, false otherwise.
    */
   public isNested(): boolean {
-    return Query.LOGICAL_TYPES.includes(
-      this.method as (typeof Query.LOGICAL_TYPES)[number],
-    );
+    return this.method === QueryType.And || this.method === QueryType.Or;
   }
 
   /**
