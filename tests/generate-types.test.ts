@@ -91,6 +91,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -126,6 +129,9 @@ describe("generateTypes", () => {
           array: true,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -155,6 +161,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -182,6 +191,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -203,6 +215,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const postCollection = {
@@ -221,6 +236,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([userCollection, postCollection]);
@@ -245,6 +263,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -266,6 +287,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -280,24 +304,36 @@ describe("generateTypes", () => {
         name: "users",
         $collection: "users",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "user_posts",
         name: "user_posts",
         $collection: "user_posts",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "api-keys",
         name: "api-keys",
         $collection: "api-keys",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "special$chars",
         name: "special$chars",
         $collection: "special$chars",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
     ];
 
@@ -316,12 +352,18 @@ describe("generateTypes", () => {
         name: "users",
         $collection: "users",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "posts",
         name: "posts",
         $collection: "posts",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
     ];
 
@@ -338,6 +380,9 @@ describe("generateTypes", () => {
       name: "empty_collection",
       $collection: "empty_collection",
       attributes: [],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([collection]);
@@ -362,6 +407,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const postCollection = {
@@ -412,6 +460,9 @@ describe("generateTypes", () => {
           array: false,
         },
       ],
+      indexes: [],
+      enabled: true,
+      documentSecurity: false,
     };
 
     const result = generateTypes([userCollection, postCollection]);
@@ -430,24 +481,36 @@ describe("generateTypes", () => {
         name: "",
         $collection: "",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "test2",
         name: "___",
         $collection: "___",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "test3",
         name: "123numbers",
         $collection: "123numbers",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
       {
         $id: "test4",
         name: "multiple---dashes",
         $collection: "multiple---dashes",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       },
     ];
 
@@ -475,6 +538,9 @@ describe("generateTypes", () => {
               array: false,
             },
           ],
+          indexes: [],
+          enabled: true,
+          documentSecurity: false,
         },
         {
           $id: "posts",
@@ -489,6 +555,9 @@ describe("generateTypes", () => {
               array: false,
             },
           ],
+          indexes: [],
+          enabled: true,
+          documentSecurity: false,
         },
       ];
 
@@ -505,6 +574,9 @@ describe("generateTypes", () => {
         name: "users",
         $collection: "users",
         attributes: [],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       };
 
       const result = generateDocType(collection);
@@ -525,6 +597,9 @@ describe("generateTypes", () => {
             array: false,
           },
         ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       };
 
       const result = generateEntityType(collection, [collection]);
@@ -539,6 +614,9 @@ describe("generateTypes", () => {
           name: "users",
           $collection: "users",
           attributes: [],
+          indexes: [],
+          enabled: true,
+          documentSecurity: false,
         },
       ];
 
@@ -558,6 +636,9 @@ describe("generateTypes", () => {
           name: "users",
           $collection: "users",
           attributes: [],
+          indexes: [],
+          enabled: true,
+          documentSecurity: false,
         },
       ];
 
@@ -613,6 +694,9 @@ describe("generateTypes", () => {
             array: true,
           },
         ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
       };
 
       const result = generateTypes([collection]);
