@@ -893,8 +893,10 @@ export abstract class Base<
       const processed = await Promise.all(
         items.map(async (item) => {
           for (let fi = filters.length - 1; fi >= 0; fi--) {
+            const filter = filters[fi];
+            if (filter === undefined) continue;
             item = await this.decodeAttribute(
-              filters[fi]!,
+              filter,
               item,
               document as unknown as Doc,
               key,
