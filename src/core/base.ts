@@ -169,8 +169,7 @@ export abstract class Base<
   protected resolveRelationships: boolean = true;
   protected checkRelationshipsExist: boolean = true;
   protected isMigrating: boolean = false;
-  protected readonly _relationStack: string[] = [];
-  protected readonly _relationDeleteStack: string[] = [];
+  protected readonly _relationStack: Set<string> = new Set();
   protected _collectionEnabledValidate: boolean = false;
   protected attachSchemaInDocument: boolean = true;
 
@@ -745,14 +744,11 @@ export abstract class Base<
     collection: Doc<Collection>,
     document: Doc<T>,
   ): Promise<Doc<T>> {
-    collection = collection.clone();
-    const attributes: (Attribute | Doc<Attribute>)[] =
-      collection.get("attributes") ?? [];
+    const attributes: (Attribute | Doc<Attribute>)[] = [
+      ...(collection.get("attributes") ?? []),
+      ...this.getInternalAttributes(),
+    ];
     const internalDateAttributes = ["$createdAt", "$updatedAt"];
-
-    for (const attribute of this.getInternalAttributes()) {
-      attributes.push(attribute);
-    }
 
     for (const attr of attributes) {
       const attribute = attr instanceof Doc ? attr.toObject() : attr;
@@ -918,13 +914,14 @@ export abstract class Base<
 
     // Decode population (relationships)
     if (populateQueries?.length) {
+      const relationshipAttrMap = new Map(
+        (collection.get("attributes") ?? [])
+          .filter((attr) => attr.get("type") === AttributeEnum.Relationship)
+          .map((attr) => [attr.getId(), attr]),
+      );
       await Promise.all(
         populateQueries.map(async (populateQuery) => {
-          const attribute = (collection.get("attributes") ?? []).find(
-            (attr) =>
-              attr.get("type") === AttributeEnum.Relationship &&
-              attr.getId() === populateQuery.attribute,
-          );
+          const attribute = relationshipAttrMap.get(populateQuery.attribute);
           if (!attribute) return;
 
           const key = attribute.get("key", attribute.getId());
@@ -1159,6 +1156,7 @@ export abstract class Base<
     depth: number,
     parentPrefix: string = "",
   ): void {
+    const internalAttrs = this.getInternalAttributes().map((a) => a.$id);
     for (let i = 0; i < populate.length; i++) {
       const { attribute, ...populateQuery }: PopulateQuery = populate[i]!;
       const relationshipAttr = collection
@@ -1182,7 +1180,6 @@ export abstract class Base<
       const currentPrefix = parentPrefix
         ? `${parentPrefix}_${relationshipKey}_`
         : `${relationshipKey}_`;
-      const internalAttrs = this.getInternalAttributes().map((a) => a.$id);
       const selections = [
         ...internalAttrs,
         "$schema",

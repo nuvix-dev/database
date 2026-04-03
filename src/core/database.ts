@@ -2084,8 +2084,8 @@ export class Database extends Cache {
 
       // Prevent infinite recursion
       const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.includes(loopKey)) continue;
-      this._relationStack.push(loopKey);
+      if (this._relationStack.has(loopKey)) continue;
+      this._relationStack.add(loopKey);
 
       try {
         if (
@@ -2165,7 +2165,7 @@ export class Database extends Cache {
           document.delete(relationship.get("key"));
         }
       } finally {
-        this._relationStack.pop();
+        this._relationStack.delete(loopKey);
       }
     }
     return document;
@@ -2244,8 +2244,8 @@ export class Database extends Cache {
         ),
       );
 
-      const foundIds = relatedDocs.map((d) => d.getId());
-      const missingIds = uniqueTargetIds.filter((id) => !foundIds.includes(id));
+      const foundIdsSet = new Set(relatedDocs.map((d) => d.getId()));
+      const missingIds = uniqueTargetIds.filter((id) => !foundIdsSet.has(id));
 
       if (missingIds.length > 0) {
         throw new RelationshipException(
@@ -2565,8 +2565,8 @@ export class Database extends Cache {
 
       // Prevent infinite recursion
       const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.includes(loopKey)) continue;
-      this._relationStack.push(loopKey);
+      if (this._relationStack.has(loopKey)) continue;
+      this._relationStack.add(loopKey);
 
       try {
         if (
@@ -2716,7 +2716,7 @@ export class Database extends Cache {
           }
         }
       } finally {
-        this._relationStack.pop();
+        this._relationStack.delete(loopKey);
       }
     }
     return document;
@@ -3288,13 +3288,13 @@ export class Database extends Cache {
       if (!relatedCollectionId) continue;
 
       const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.includes(loopKey)) continue;
-      this._relationStack.push(loopKey);
+      if (this._relationStack.has(loopKey)) continue;
+      this._relationStack.add(loopKey);
 
       try {
         await this.handleOnDelete(collection, document, relationship, options);
       } finally {
-        this._relationStack.pop();
+        this._relationStack.delete(loopKey);
       }
     }
   }
