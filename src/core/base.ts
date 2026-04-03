@@ -108,6 +108,8 @@ export abstract class Base<
     "_permissions_id",
     "_permissions",
   ];
+  protected static readonly INTERNAL_DATE_ATTRIBUTES: ReadonlySet<string> =
+    new Set(["$createdAt", "$updatedAt"]);
   protected static readonly COLLECTION: Collection = {
     $id: Base.METADATA,
     $collection: Base.METADATA,
@@ -748,7 +750,6 @@ export abstract class Base<
       ...(collection.get("attributes") ?? []),
       ...this.getInternalAttributes(),
     ];
-    const internalDateAttributes = ["$createdAt", "$updatedAt"];
 
     for (const attr of attributes) {
       const attribute = attr instanceof Doc ? attr.toObject() : attr;
@@ -765,7 +766,7 @@ export abstract class Base<
 
       if (attribute.type === AttributeEnum.Relationship) continue;
       if (
-        internalDateAttributes.includes(key) &&
+        Base.INTERNAL_DATE_ATTRIBUTES.has(key) &&
         typeof value === "string" &&
         value === ""
       ) {
@@ -891,9 +892,9 @@ export abstract class Base<
 
       const processed = await Promise.all(
         items.map(async (item) => {
-          for (const filter of [...filters].reverse()) {
+          for (let fi = filters.length - 1; fi >= 0; fi--) {
             item = await this.decodeAttribute(
-              filter,
+              filters[fi]!,
               item,
               document as unknown as Doc,
               key,
