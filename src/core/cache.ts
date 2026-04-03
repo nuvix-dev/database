@@ -2,7 +2,6 @@ import { Cache as NuvixCache } from "@nuvix/cache";
 import { Base } from "./base.js";
 import { Collection } from "@validators/schema.js";
 import { Doc } from "./doc.js";
-import { createHash } from "crypto";
 import type { ProcessedQuery } from "./database.js";
 import { fnv1a128 } from "@utils/index.js";
 

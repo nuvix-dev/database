@@ -143,6 +143,8 @@ export abstract class Base<
         default: true,
       },
     ],
+    indexes: [],
+    enabled: true,
     documentSecurity: false,
   };
 

@@ -44,9 +44,9 @@ export type Collection = {
   $schema?: string;
   name: string;
   attributes: Attribute[];
-  indexes?: Index[];
-  documentSecurity?: boolean; // default false, optional
-  enabled?: boolean; // default true, optional
+  indexes: Index[];
+  documentSecurity: boolean; // default false, optional
+  enabled: boolean; // default true, optional
 };
 
 export type { AttributeOptions as RelationOptions };

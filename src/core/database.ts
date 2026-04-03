@@ -81,6 +81,11 @@ export class Database extends Cache {
   /**
    * Check is database or collection already exists or not.
    */
+  public async exists<C extends keyof Entities>(
+    database?: string,
+    collection?: C,
+  ): Promise<boolean>;
+  public async exists(database?: string, collection?: string): Promise<boolean>;
   public async exists(
     database?: string,
     collection?: string,
@@ -1951,13 +1956,18 @@ export class Database extends Cache {
     collectionId: C,
     document: Doc<Entities[C]> | Entities[C],
   ): Promise<Doc<Entities[C]>>;
-  public async createDocument<D extends Record<string, any>>(
-    collectionId: string,
-    document: Doc<D>,
+  public async createDocument<
+    D extends Record<string, unknown>,
+    C extends string,
+  >(
+    collectionId: C,
+    document: C extends keyof Entities
+      ? Doc<Entities[C]> | Entities[C]
+      : Doc<D> | D,
   ): Promise<Doc<D>>;
   public async createDocument(
     collectionId: string,
-    document: Doc<Partial<IEntity>>,
+    document: Doc<Partial<IEntity>> | Partial<IEntity>,
   ): Promise<Doc<Partial<IEntity>>> {
     if (
       collectionId !== Database.METADATA &&
@@ -2268,11 +2278,16 @@ export class Database extends Cache {
    */
   public async createDocuments<C extends string & keyof Entities>(
     collectionId: C,
-    documents: Doc<Entities[C]>[],
+    documents: Doc<Entities[C]>[] | Entities[C][],
   ): Promise<Doc<Entities[C]>[]>;
-  public async createDocuments<D extends Doc<Record<string, any>>>(
-    collectionId: string,
-    documents: D[],
+  public async createDocuments<
+    D extends Doc<Record<string, any>>,
+    C extends string,
+  >(
+    collectionId: C,
+    documents: C extends keyof Entities
+      ? Doc<Entities[C]>[] | Entities[C][]
+      : Doc<D>[] | D[],
   ): Promise<D[]>;
   public async createDocuments<D extends Doc<Record<string, any>>>(
     collectionId: string,
@@ -2378,17 +2393,17 @@ export class Database extends Cache {
   public async updateDocument<C extends string & keyof Entities>(
     collectionId: C,
     id: string,
-    document: Entities[C],
+    document: Entities[C] | Doc<Entities[C]>,
   ): Promise<Doc<Entities[C]>>;
   public async updateDocument<D extends Doc<Record<string, any>>>(
     collectionId: string,
     id: string,
-    document: D,
+    document: D | Doc<D>,
   ): Promise<D>;
   public async updateDocument(
     collectionId: string,
     id: string,
-    document: Doc<Record<string, any>>,
+    document: Doc<Record<string, any>> | Record<string, any>,
   ): Promise<Doc<any>> {
     if (!id) {
       throw new DatabaseException("Must define $id attribute");
@@ -2718,9 +2733,12 @@ export class Database extends Cache {
     onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
     onError?: (error: Error) => void | Promise<void>,
   ): Promise<number>;
-  public async updateDocuments<D extends Doc<Record<string, any>>>(
-    collectionId: string,
-    updates: D,
+  public async updateDocuments<
+    D extends Doc<Record<string, any>>,
+    C extends string,
+  >(
+    collectionId: C,
+    updates: C extends keyof Entities ? Doc<Entities[C]> : D,
     query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
     batchSize?: number,
     onNext?: (doc: D) => void | Promise<void>,
@@ -2939,6 +2957,14 @@ export class Database extends Cache {
   /**
    * Delete document by ID.
    */
+  public async deleteDocument<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+  ): Promise<boolean>;
+  public async deleteDocument<C extends string>(
+    collectionId: C,
+    id: string,
+  ): Promise<boolean>;
   public async deleteDocument(
     collectionId: string,
     id: string,
@@ -3003,6 +3029,14 @@ export class Database extends Cache {
   /**
    * Delete multiple documents in a collection.
    */
+  public async deleteDocuments<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: Query[] | ((qb: QueryBuilder<C>) => QueryBuilder<C>),
+  ): Promise<string[]>;
+  public async deleteDocuments(
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+  ): Promise<string[]>;
   public async deleteDocuments(
     collectionId: string,
     query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
@@ -3415,9 +3449,12 @@ export class Database extends Cache {
     batchSize?: number,
     onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
   ): Promise<number>;
-  public async createOrUpdateDocuments<D extends Doc<Record<string, any>>>(
-    collectionId: string,
-    documents: D[],
+  public async createOrUpdateDocuments<
+    D extends Doc<Record<string, any>>,
+    C extends string,
+  >(
+    collectionId: C,
+    documents: C extends keyof Entities ? Doc<Entities[C]>[] : D[],
     batchSize?: number,
     onNext?: (doc: D) => void | Promise<void>,
   ): Promise<number>;
@@ -3439,6 +3476,25 @@ export class Database extends Cache {
   /**
    * Create or update documents, increasing the value of the given attribute by the value in each document.
    */
+  public async createOrUpdateDocumentsWithIncrease<
+    C extends string & keyof Entities,
+  >(
+    collectionId: C,
+    attribute: keyof Entities[C] & string,
+    documents: Doc<Entities[C]>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
+  ): Promise<number>;
+  public async createOrUpdateDocumentsWithIncrease<
+    D extends Doc<Record<string, any>>,
+    C extends string,
+  >(
+    collectionId: C,
+    attribute: string,
+    documents: C extends keyof Entities ? Doc<Entities[C]>[] : D[],
+    batchSize?: number,
+    onNext?: (doc: D) => void | Promise<void>,
+  ): Promise<number>;
   public async createOrUpdateDocumentsWithIncrease(
     collectionId: string,
     attribute: string,
@@ -3680,6 +3736,20 @@ export class Database extends Cache {
   /**
    * Increase a numeric attribute value in a document.
    */
+  public async increaseDocumentAttribute<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+    attribute: keyof Entities[C] & string,
+    value?: number,
+    max?: number,
+  ): Promise<Doc<Entities[C]>>;
+  public async increaseDocumentAttribute<C extends string>(
+    collectionId: C,
+    id: string,
+    attribute: string,
+    value?: number,
+    max?: number,
+  ): Promise<Doc<any>>;
   public async increaseDocumentAttribute(
     collectionId: string,
     id: string,
@@ -3772,6 +3842,20 @@ export class Database extends Cache {
   /**
    * Decrease a numeric attribute value in a document.
    */
+  public async decreaseDocumentAttribute<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+    attribute: keyof Entities[C] & string,
+    value?: number,
+    min?: number,
+  ): Promise<Doc<Entities[C]>>;
+  public async decreaseDocumentAttribute<C extends string>(
+    collectionId: C,
+    id: string,
+    attribute: string,
+    value?: number,
+    min?: number,
+  ): Promise<Doc<any>>;
   public async decreaseDocumentAttribute(
     collectionId: string,
     id: string,
@@ -3956,6 +4040,16 @@ export class Database extends Cache {
   /**
    * Count documents in a collection.
    */
+  public count<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+    max?: number,
+  ): Promise<number>;
+  public count<C extends string>(
+    collectionId: C,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number>;
   public async count(
     collectionId: string,
     query: ((builder: QueryBuilder) => QueryBuilder) | Query[] = [],
@@ -3993,6 +4087,18 @@ export class Database extends Cache {
   /**
    * Sum an attribute for all documents in a collection.
    */
+  public sum<C extends string & keyof Entities>(
+    collectionId: C,
+    attribute: keyof Entities[C] & string,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+    max?: number,
+  ): Promise<number>;
+  public sum<C extends string>(
+    collectionId: C,
+    attribute: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number>;
   public async sum(
     collectionId: string,
     attribute: string,
