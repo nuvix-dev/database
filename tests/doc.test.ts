@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "vitest";
 import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
-import { Doc, DocException } from "index.js";
+import { Doc, DocException, IEntity } from "index.js";
 
 describe("Doc Class", () => {
   describe("Constructor", () => {
@@ -98,7 +98,10 @@ describe("Doc Class", () => {
 
   describe("Static Methods", () => {
     test("Doc.from() should create a new Doc instance", () => {
-      const doc = Doc.from({ $id: "test", name: "Test Name" });
+      const doc = Doc.from<{ name: string } & IEntity>({
+        $id: "test",
+        name: "Test Name",
+      });
 
       expect(doc).toBeInstanceOf(Doc);
       expect(doc.get("$id")).toBe("test");

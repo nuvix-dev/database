@@ -81,8 +81,10 @@ export class Doc<
   /**
    * Creates a new Doc instance from the provided data.
    */
-  static from<D extends Partial<IEntity>>(data: D & IEntityInput): Doc<D> {
-    return new Doc(data);
+  static from<D extends Partial<IEntity>>(
+    data: Omit<D, keyof IEntity> & IEntityInput,
+  ): Doc<D> {
+    return new Doc(data) as Doc<D>;
   }
 
   /**

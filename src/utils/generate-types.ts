@@ -155,6 +155,10 @@ function generateAttributeType(
     tsType += "[]";
   }
 
+  if (attr.required === false && attr.default !== undefined) {
+    tsType += ` | ${attr.default === null ? "null" : JSON.stringify(attr.default)}`;
+  }
+
   // Handle optional fields
   const optional = attr.required ? "" : "?";
 
