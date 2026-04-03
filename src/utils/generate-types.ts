@@ -155,12 +155,18 @@ function generateAttributeType(
     tsType += "[]";
   }
 
-  if (attr.required === false && attr.default !== undefined) {
-    tsType += ` | ${attr.default === null ? "null" : JSON.stringify(attr.default)}`;
-  }
-
   // Handle optional fields
   const optional = attr.required ? "" : "?";
+  if (
+    optional &&
+    attr.default !== undefined &&
+    attr.default !== null &&
+    !(
+      typeof attr.default === "object" && Object.keys(attr.default).length === 0
+    )
+  ) {
+    tsType += ` | ${JSON.stringify(attr.default)}`;
+  }
 
   // Add JSDoc comments for better type information
   const comment = generateAttributeComment(attr);
@@ -277,9 +283,11 @@ function generateAttributeComment(attr: Attribute): string {
 
   if (!attr.required) {
     comments.push(`@optional`);
+  } else {
+    comments.push(`@required`);
   }
 
-  if (attr.default !== undefined) {
+  if (attr.default !== undefined && !attr.required) {
     comments.push(`@default ${JSON.stringify(attr.default)}`);
   }
 

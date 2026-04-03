@@ -1959,10 +1959,7 @@ export class Database extends Cache {
     collectionId: C,
     document: Doc<Entities[C]> | Entities[C],
   ): Promise<Doc<Entities[C]>>;
-  public async createDocument<
-    D extends Record<string, unknown>,
-    C extends string,
-  >(
+  public async createDocument<D extends Record<string, any>, C extends string>(
     collectionId: C,
     document: C extends keyof Entities
       ? Doc<Entities[C]> | Entities[C]
@@ -3779,7 +3776,10 @@ export class Database extends Cache {
       throw new NotFoundException("Attribute not found");
     }
 
-    if (!Database.NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) || attr.get("array")) {
+    if (
+      !Database.NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) ||
+      attr.get("array")
+    ) {
       throw new DatabaseException(
         "Attribute must be an integer or float and can not be an array.",
       );
@@ -3883,7 +3883,10 @@ export class Database extends Cache {
       throw new NotFoundException("Attribute not found");
     }
 
-    if (!Database.NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) || attr.get("array")) {
+    if (
+      !Database.NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) ||
+      attr.get("array")
+    ) {
       throw new DatabaseException(
         "Attribute must be an integer or float and can not be an array.",
       );
