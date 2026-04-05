@@ -308,6 +308,10 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
   ): Promise<T> {
     const previousSilenceStatus = this._listenerSilenceStatus;
 
+    if (listeners === null && previousSilenceStatus === null) {
+      return await callback();
+    }
+
     try {
       if (listeners === null) {
         this._listenerSilenceStatus = null;

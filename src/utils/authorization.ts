@@ -78,7 +78,7 @@ export class Authorization implements Validator {
       }
     }
 
-    this.message = `Missing "${this.action}" permission for role "${lastPermission}". Only "${JSON.stringify(permissions)}" scopes are allowed and "${JSON.stringify(authorizedRoles)}" was given.`;
+    this.message = `Missing "${this.action}" permission for role "${lastPermission}". Only "${JSON.stringify(authorizedRoles)}" scopes are allowed and "${JSON.stringify(permissions)}" was given.`;
     return false;
   }
 
@@ -203,6 +203,11 @@ export class Authorization implements Validator {
    */
   public static async skip<T>(callback: () => Promise<T>): Promise<T> {
     const initialStatus = this.getStatus();
+
+    if (initialStatus === false) {
+      return await callback();
+    }
+
     this.disable();
     try {
       return await callback();
