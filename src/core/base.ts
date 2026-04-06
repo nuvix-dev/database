@@ -324,6 +324,11 @@ export abstract class Base<
 
   public async skipFilters<T>(callback: Callback<T>): Promise<T> {
     const initial = this.filter;
+
+    if (!initial) {
+      return await callback();
+    }
+
     this.disableFilters();
 
     try {
@@ -335,6 +340,11 @@ export abstract class Base<
 
   public async skipValidation<T>(callback: Callback<T>): Promise<T> {
     const initial = this.validate;
+
+    if (!initial) {
+      return await callback();
+    }
+
     this.disableValidation();
 
     try {
@@ -346,6 +356,9 @@ export abstract class Base<
 
   public async skipRelationships<T>(callback: Callback<T>): Promise<T> {
     const previous = this.resolveRelationships;
+    if (!previous) {
+      return await callback();
+    }
     this.resolveRelationships = false;
 
     try {
@@ -359,6 +372,9 @@ export abstract class Base<
     callback: Callback<T>,
   ): Promise<T> {
     const previous = this.checkRelationshipsExist;
+    if (!previous) {
+      return await callback();
+    }
     this.checkRelationshipsExist = false;
 
     try {
@@ -373,6 +389,9 @@ export abstract class Base<
     callback: Callback<T>,
   ): Promise<T> {
     const previous = this.adapter.$tenantId;
+    if (tenantId === previous) {
+      return await callback();
+    }
     this.adapter.setMeta({ tenantId: tenantId ?? undefined });
 
     try {
@@ -387,6 +406,9 @@ export abstract class Base<
     callback: Callback<T>,
   ): Promise<T> {
     const previous = this.adapter.$schema;
+    if (schema === previous) {
+      return await callback();
+    }
     this.adapter.setMeta({ schema });
 
     try {
@@ -412,6 +434,9 @@ export abstract class Base<
     callback: Callback<T>,
   ): Promise<T> {
     const previous = this._collectionEnabledValidate;
+    if (enabled === previous) {
+      return await callback();
+    }
     this._collectionEnabledValidate = enabled;
 
     try {
@@ -426,6 +451,9 @@ export abstract class Base<
     callback: Callback<T>,
   ): Promise<T> {
     const previous = this.attachSchemaInDocument;
+    if (enabled === previous) {
+      return await callback();
+    }
     this.attachSchemaInDocument = enabled;
 
     try {
