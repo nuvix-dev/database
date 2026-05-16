@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
-import { writeFileSync, mkdirSync, existsSync } from "fs";
-import { dirname, resolve } from "path";
-import { parseArgs } from "util";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { ConfigLoader } from "../config/loader.js";
 import { generateTypes } from "../utils/generate-types.js";
 import { NuvixDBConfig, CLIOptions } from "../config/types.js";

@@ -1,6 +1,6 @@
 {
   "name": "@nuvix/db",
-  "version": "0.2.5",
+  "version": "0.3.0-bun.0",
   "description": "Modular and performant open source database library for Nuvix, with internal complexity abstracted from developers.",
   "license": "BSD-3-Clause",
   "main": "./dist/index.cjs",
@@ -18,20 +18,18 @@
     "nuvix-db": "dist/cli/generate-types.js"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "bun run build.ts",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "rm -rf dist && npm run build && npm run typecheck",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "generate-types": "node dist/cli/generate-types.js",
-    "types:init": "node dist/cli/generate-types.js --init",
-    "types:watch": "node dist/cli/generate-types.js --watch",
+    "prepublishOnly": "rm -rf dist && bun run build && bun run typecheck",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "generate-types": "bun dist/cli/generate-types.js",
+    "types:init": "bun dist/cli/generate-types.js --init",
+    "types:watch": "bun dist/cli/generate-types.js --watch",
     "format": "prettier --write ."
   },
-  "dependencies": {
-    "chalk": "^5.5.0"
-  },
+  "dependencies": {},
   "files": [
     "dist",
     "LICENSE",
@@ -44,17 +42,12 @@
   },
   "devDependencies": {
     "@nuvix/cache": "^1.0.3-alpha.1",
-    "@types/node": "^24.1.0",
-    "@types/pg": "^8.15.5",
-    "pg": "^8.16.3",
+    "@types/bun": "latest",
     "prettier": "^3.6.2",
-    "tsup": "^8.5.0",
-    "typescript": "^5.8.3",
-    "vite-tsconfig-paths": "^5.1.2",
-    "vitest": "^2.0.5"
+    "typescript": "^5.8.3"
   },
   "engines": {
-    "node": ">=18.17"
+    "bun": ">= 1.3.0"
   },
   "keywords": [
     "nuvix",
@@ -65,6 +58,7 @@
     "postgresql",
     "modular",
     "validation",
-    "pino"
+    "bun",
+    "bun-native"
   ]
 }

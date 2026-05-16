@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { EventEmitter } from "node:events";
 import { EventsEnum } from "./enums.js";
 import { Logger } from "@utils/logger.js";
 import { Doc } from "./doc.js";

@@ -37,11 +37,10 @@ export class ID {
   public static unique(padding: number = 7): string {
     // Generate a unique ID with padding to have a longer ID
     const baseId = ID.#hexTimestamp();
-    let randomPadding = "";
-    for (let i = 0; i < padding; i++) {
-      const randomHexDigit = Math.floor(Math.random() * 16).toString(16);
-      randomPadding += randomHexDigit;
-    }
+    // crypto-grade randomness — single alloc instead of N string concats
+    const bytes = new Uint8Array(Math.ceil(padding / 2));
+    crypto.getRandomValues(bytes);
+    const randomPadding = Buffer.from(bytes).toString("hex").slice(0, padding);
     return baseId + randomPadding;
   }
 }

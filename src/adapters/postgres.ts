@@ -1,120 +1,97 @@
-import PG, {
-  Pool,
-  PoolClient,
-  QueryArrayConfig,
-  QueryArrayResult,
-  QueryConfig,
-  QueryConfigValues,
-  QueryResult,
-  QueryResultRow,
-  Submittable,
-  escapeLiteral,
-} from "pg";
+import { SQL } from "bun";
 import { TransactionException } from "@errors/index.js";
-import { Logger } from "@utils/logger.js";
 
-const types = PG.types;
-types.setTypeParser(types.builtins.INT8, (x) => {
-  const n = Number(x);
-  return Number.isSafeInteger(n) ? n : x;
-});
-[types.builtins.NUMERIC, types.builtins.FLOAT4, types.builtins.FLOAT8].forEach(
-  (id) => types.setTypeParser(id, parseFloat),
-);
-types.setTypeParser(types.builtins.BOOL, (val) => val === "t");
+/**
+ * Converts '?' placeholders in SQL text to PostgreSQL-style '$1, $2, ...' syntax.
+ * Avoids regex overhead in the hot path by using a direct char scan.
+ */
+function convertPlaceholders(text: string): string {
+  if (text.indexOf("?") === -1) return text;
 
-// --- Helper for Query Building ---
-function prepareQuery(
-  sql: string | QueryConfig,
-  values?: any[],
-  timeout?: number,
-): QueryConfig {
-  let config: QueryConfig =
-    typeof sql === "string" ? { text: sql, values } : { ...sql };
+  let result = "";
+  let paramIndex = 1;
+  let lastPos = 0;
 
-  // Convert '?' syntax to Postgres '$1, $2' syntax
-  if (config.text.includes("?")) {
-    let index = 1;
-    config.text = config.text.replace(/\?/g, () => `$${index++}`);
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 63 /* '?' */) {
+      result += text.slice(lastPos, i) + "$" + paramIndex++;
+      lastPos = i + 1;
+    }
   }
 
-  if (timeout) (config as any).query_timeout = timeout;
-  return config;
+  return lastPos === 0 ? text : result + text.slice(lastPos);
+}
+
+/** Minimal query result shape returned by our client layer. */
+export interface QueryResult<R = any> {
+  rows: R[];
+  rowCount: number;
+}
+
+/** SQL literal escaping for values embedded directly in SQL strings. */
+function escapeLiteral(value: any): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number" || typeof value === "bigint")
+    return String(value);
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  const str = String(value);
+  return "'" + str.replace(/'/g, "''") + "'";
 }
 
 /**
  * Handle for a single transaction.
  * This is "Concurrency Safe" because state is unique to this instance.
+ * Wraps a Bun SQL transaction handle (`tx` from `sql.begin()`).
  */
 export class Transaction {
-  readonly __type = "transaction";
+  readonly __type = "transaction" as const;
   private savepointCount = 0;
 
   constructor(
-    private readonly client: PoolClient,
+    private readonly bunTx: ReturnType<SQL["begin"]> extends Promise<infer U>
+      ? any
+      : any,
     private readonly timeout: number,
-    private readonly pool: Pool,
+    private readonly sql: SQL,
+    private readonly _database: string,
   ) {}
 
-  query<T extends Submittable>(queryStream: T): T;
-  query<R extends any[] = any[], I = any[]>(
-    queryConfig: QueryArrayConfig<I>,
-    values?: QueryConfigValues<I>,
-  ): Promise<QueryArrayResult<R>>;
-  query<R extends QueryResultRow = any, I = any>(
-    queryConfig: QueryConfig<I>,
-  ): Promise<QueryResult<R>>;
-  query<R extends QueryResultRow = any, I = any[]>(
-    queryTextOrConfig: string | QueryConfig<I>,
-    values?: QueryConfigValues<I>,
-  ): Promise<QueryResult<R>>;
-  async query<T = any>(
-    sql: string | QueryConfig,
+  async query<R = any>(
+    sqlText: string | { text: string; values?: any[] },
     values?: any[],
-  ): Promise<any> {
-    return await this.client.query(prepareQuery(sql, values, this.timeout));
-  }
+  ): Promise<QueryResult<R>> {
+    const text =
+      typeof sqlText === "string"
+        ? convertPlaceholders(sqlText)
+        : convertPlaceholders(sqlText.text);
+    const params =
+      typeof sqlText === "string" ? values ?? [] : sqlText.values ?? [];
 
-  async begin() {
-    await this.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-  }
-
-  async commit() {
-    await this.query("COMMIT");
-  }
-
-  async rollback() {
-    await this.query("ROLLBACK");
-  }
-
-  async savepoint(): Promise<string> {
-    const name = `sp_${++this.savepointCount}`;
-    await this.query(`SAVEPOINT ${name}`);
-    return name;
+    const result = await this.bunTx.unsafe(text, params);
+    return {
+      rows: result as unknown as R[],
+      rowCount: (result as any).count ?? (result as any).length ?? 0,
+    };
   }
 
   async transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> {
-    const spName = await this.savepoint();
-    try {
-      const result = await callback(this);
-      await this.releaseSavepoint(spName);
-      return result;
-    } catch (error) {
-      await this.rollbackTo(spName);
-      throw error;
-    }
+    return await this.bunTx.savepoint(async (sp: any) => {
+      const nestedTx = new Transaction(
+        sp,
+        this.timeout,
+        this.sql,
+        this._database,
+      ) as this;
+      return await callback(nestedTx);
+    });
   }
 
-  async releaseSavepoint(name: string) {
-    await this.query(`RELEASE SAVEPOINT ${name}`);
+  getPool(): SQL {
+    return this.sql;
   }
 
-  async rollbackTo(name: string) {
-    await this.query(`ROLLBACK TO SAVEPOINT ${name}`);
-  }
-
-  getPool(): Pool {
-    return this.pool;
+  get database(): string {
+    return this._database;
   }
 
   public quote(value: any): string {
@@ -122,41 +99,64 @@ export class Transaction {
   }
 
   async ping(): Promise<void> {
-    await this.query("SELECT 1");
+    await this.bunTx.unsafe("SELECT 1");
   }
 
   async disconnect(): Promise<void> {
-    this.client.release();
+    // Transaction handles are released when the transaction block completes.
+    // No-op here to maintain API compatibility.
   }
 }
 
 /**
- * Main Database Client
+ * Main Database Client — wraps Bun's native SQL instance.
+ * Replaces the previous `pg.Pool`-based implementation with Bun's built-in
+ * binary protocol, connection pooling, and prepared statement caching.
  */
 export class PostgresClient {
-  readonly __type = "postgres";
-  private pool: Pool;
+  readonly __type = "postgres" as const;
+  private sql: SQL;
   private readonly queryTimeout: number;
+  private readonly _database: string;
 
-  constructor(pool: Pool, queryTimeout = 30000) {
-    this.pool = pool;
+  constructor(sql: SQL | string, queryTimeout = 30000) {
+    if (typeof sql === "string") {
+      this.sql = new SQL(sql);
+      // Extract database name from connection string
+      try {
+        const url = new URL(sql);
+        this._database = url.pathname.slice(1) || "postgres";
+      } catch {
+        this._database = "postgres";
+      }
+    } else {
+      this.sql = sql;
+      // Bun SQL exposes `options.database` on the instance
+      this._database = (sql as any).options?.database ?? "postgres";
+    }
     this.queryTimeout = queryTimeout;
   }
 
-  query<T extends Submittable>(queryStream: T): T;
-  query<R extends any[] = any[], I = any[]>(
-    queryConfig: QueryArrayConfig<I>,
-    values?: QueryConfigValues<I>,
-  ): Promise<QueryArrayResult<R>>;
-  query<R extends QueryResultRow = any, I = any>(
-    queryConfig: QueryConfig<I>,
-  ): Promise<QueryResult<R>>;
-  query<R extends QueryResultRow = any, I = any[]>(
-    queryTextOrConfig: string | QueryConfig<I>,
-    values?: QueryConfigValues<I>,
-  ): Promise<QueryResult<R>>;
-  public async query(sql: string | QueryConfig, values?: any[]): Promise<any> {
-    return await this.pool.query(prepareQuery(sql, values, this.queryTimeout));
+  /**
+   * Bridge method: accepts the old-style (sqlString, values[]) signature
+   * and delegates to `sql.unsafe()` for execution via Bun's binary protocol.
+   */
+  public async query<R = any>(
+    sqlText: string | { text: string; values?: any[] },
+    values?: any[],
+  ): Promise<QueryResult<R>> {
+    const text =
+      typeof sqlText === "string"
+        ? convertPlaceholders(sqlText)
+        : convertPlaceholders(sqlText.text);
+    const params =
+      typeof sqlText === "string" ? values ?? [] : sqlText.values ?? [];
+
+    const result = await this.sql.unsafe(text, params);
+    return {
+      rows: result as unknown as R[],
+      rowCount: (result as any).count ?? (result as any).length ?? 0,
+    };
   }
 
   public quote(value: any): string {
@@ -164,48 +164,50 @@ export class PostgresClient {
   }
 
   async ping(): Promise<void> {
-    await this.query("SELECT 1");
+    await this.sql`SELECT 1`;
   }
 
   /**
-   * Executes a callback in a safe, isolated transaction.
-   * Handles retries for deadlocks and serialization failures.
+   * Executes a callback inside a transaction with automatic retry for
+   * deadlocks (40P01) and serialization failures (40001).
    */
   async transaction<T>(
     callback: (tx: Transaction) => Promise<T>,
     maxRetries = 3,
   ): Promise<T> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const client = await this.pool.connect();
-      const tx = new Transaction(client, this.queryTimeout, this.pool);
-
       try {
-        await tx.begin();
-        const result = await callback(tx);
-        await tx.commit();
-        return result;
+        return await this.sql.begin(async (bunTx) => {
+          const tx = new Transaction(
+            bunTx,
+            this.queryTimeout,
+            this.sql,
+            this._database,
+          );
+          return await callback(tx);
+        });
       } catch (err: any) {
-        await tx.rollback().catch((e) => Logger.error("Rollback error", e));
-
         const isRetryable = err.code === "40P01" || err.code === "40001";
         if (isRetryable && attempt < maxRetries) {
-          const delay = Math.pow(2, attempt) * 50;
-          await new Promise((res) => setTimeout(res, delay));
+          const delay = (1 << attempt) * 50; // 100ms, 200ms, 400ms…
+          await Bun.sleep(delay);
           continue;
         }
         throw err;
-      } finally {
-        client.release();
       }
     }
     throw new TransactionException("Transaction failed after max retries.");
   }
 
   async disconnect(): Promise<void> {
-    await this.pool.end();
+    await this.sql.close();
   }
 
-  getPool(): Pool {
-    return this.pool;
+  getPool(): SQL {
+    return this.sql;
+  }
+
+  get database(): string {
+    return this._database;
   }
 }

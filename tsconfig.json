@@ -2,8 +2,9 @@
   "compilerOptions": {
     // Base Options
     "target": "ES2022",
-    "module": "NodeNext", // Enable Node.js-style resolution
-    "moduleResolution": "NodeNext", // Required for Node ESM
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun-types"],
     "lib": ["ES2022"],
     // Strictness
     "strict": true, // Enable all strict type checks

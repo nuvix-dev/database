@@ -1,8 +1,8 @@
+import { SQL } from "bun";
 import { Adapter } from "@adapters/adapter.js";
 import { Database } from "@core/database.js";
 import { Authorization } from "@utils/authorization.js";
 import { Cache as NuvixCache, Redis } from "@nuvix/cache";
-import { Pool } from "pg";
 
 export function createTestAdapter(
   meta?: Partial<{
@@ -14,12 +14,11 @@ export function createTestAdapter(
     namespace: string;
   }>,
 ): Adapter {
-  const config = new Pool({
-    connectionString:
-      process.env["PG_URL"] ||
-      "postgres://user:password@localhost:5432/postgres",
-  });
-  const adapter = new Adapter(config);
+  const connectionString =
+    process.env["PG_URL"] ||
+    "postgres://user:password@localhost:5432/postgres";
+  const sql = new SQL(connectionString);
+  const adapter = new Adapter(sql);
   adapter.setMeta({
     schema: meta?.schema || "public",
     sharedTables: meta?.sharedTables ?? false,

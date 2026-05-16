@@ -1,7 +1,17 @@
 import { DatabaseException } from "@errors/base.js";
 import { Permission } from "@utils/permission.js";
 import { IEntity, IEntityInput } from "types.js";
-import chalk from "chalk";
+
+// Zero-dependency ANSI color helpers — replaces chalk for inspect output
+const ansi = {
+  cyan:    (s: string) => `\x1b[36m${s}\x1b[0m`,
+  green:   (s: string) => `\x1b[32m${s}\x1b[0m`,
+  gray:    (s: string) => `\x1b[90m${s}\x1b[0m`,
+  yellow:  (s: string) => `\x1b[33m${s}\x1b[0m`,
+  magenta: (s: string) => `\x1b[35m${s}\x1b[0m`,
+  blue:    (s: string) => `\x1b[34m${s}\x1b[0m`,
+  red:     (s: string) => `\x1b[31m${s}\x1b[0m`,
+};
 
 type IsReferenceObject<T> = T extends { $id: string }
   ? true
@@ -577,26 +587,26 @@ export class Doc<
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const formatValue = (value: any, depth: number = 0): string => {
       if (value instanceof Doc) {
-        return chalk.cyan(`Doc(${formatValue(value.#_data, depth + 1)})`);
+        return ansi.cyan(`Doc(${formatValue(value.#_data, depth + 1)})`);
       } else if (Array.isArray(value)) {
-        return chalk.green(
+        return ansi.green(
           `[${value.map((item) => formatValue(item, depth + 1)).join(", ")}]`,
         );
       } else if (typeof value === "function") {
-        return chalk.gray("[Function]");
+        return ansi.gray("[Function]");
       } else if (typeof value === "undefined") {
-        return chalk.gray("undefined");
+        return ansi.gray("undefined");
       } else if (typeof value === "object" && value !== null) {
         // Only treat as object literal if prototype is Object
         if (Object.getPrototypeOf(value) === Object.prototype) {
           if (Object.keys(value).length === 0) {
-            return chalk.gray("{}");
+            return ansi.gray("{}");
           }
           const indent = "  ".repeat(depth + 1);
           const entries = Object.entries(value)
             .map(
               ([key, val]) =>
-                `${indent}${chalk.yellow(key)}: ${formatValue(val, depth + 1)}`,
+                `${indent}${ansi.yellow(key)}: ${formatValue(val, depth + 1)}`,
             )
             .join(",\n");
           return `{
@@ -605,26 +615,26 @@ ${"  ".repeat(depth)}}`;
         } else {
           // It's a class instance, check for toString or toJSON
           if (typeof value.toJSON === "function") {
-            return chalk.gray(`[toJSON: ${JSON.stringify(value.toJSON())}]`);
+            return ansi.gray(`[toJSON: ${JSON.stringify(value.toJSON())}]`);
           } else if (
             typeof value.toString === "function" &&
             value.toString !== Object.prototype.toString
           ) {
-            return chalk.gray(`[toString: ${value.toString()}]`);
+            return ansi.gray(`[toString: ${value.toString()}]`);
           } else {
-            return chalk.gray(
+            return ansi.gray(
               `[instance of ${(value as any).constructor?.name || "Unknown"}]`,
             );
           }
         }
       } else if (typeof value === "string") {
-        return chalk.magenta(`"${value}"`);
+        return ansi.magenta(`"${value}"`);
       } else if (typeof value === "number") {
-        return chalk.blue(value.toString());
+        return ansi.blue(value.toString());
       } else if (typeof value === "boolean") {
-        return chalk.red(value.toString());
+        return ansi.red(value.toString());
       } else if (value === null) {
-        return chalk.gray("null");
+        return ansi.gray("null");
       } else {
         return String(value);
       }

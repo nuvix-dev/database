@@ -18,7 +18,7 @@ import { Entities, IEntity } from "types.js";
 import { Logger } from "@utils/logger.js";
 import { Authorization } from "@utils/authorization.js";
 import { Collection, RelationOptions } from "@validators/schema.js";
-import { DatabaseError } from "pg";
+import { SQL } from "bun";
 import {
   DuplicateException,
   NotFoundException,
@@ -26,8 +26,7 @@ import {
   TimeoutException,
   TruncateException,
 } from "@errors/index.js";
-import { createHash } from "crypto";
-import { EventEmitter } from "events";
+import { EventEmitter } from "node:events";
 import type { PostgresClient, Transaction } from "./postgres.js";
 
 export abstract class BaseAdapter extends EventEmitter {
@@ -80,7 +79,7 @@ export abstract class BaseAdapter extends EventEmitter {
   }
 
   public get $database(): string {
-    const database = this.client.getPool().options.database;
+    const database = this.client.database;
     if (!database)
       throw new DatabaseException(
         "Database name is not defined in client metadata.",
@@ -849,22 +848,34 @@ export abstract class BaseAdapter extends EventEmitter {
   }
 
   protected processException(
-    error: DatabaseError | unknown,
+    error: unknown,
     message?: string,
   ): never {
-    const e = error as DatabaseError;
+    // Re-throw our own exceptions directly
+    if (error instanceof DatabaseException) {
+      throw error;
+    }
 
-    if (!(e instanceof DatabaseError)) {
-      if ((e as any) instanceof DatabaseException) {
-        throw e;
-      }
+    // Detect Bun's native PostgresError via SQL.PostgresError
+    const isPgError =
+      error instanceof SQL.PostgresError ||
+      (error != null &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof (error as any).code === "string" &&
+        (error as any).code.length === 5);
+
+    if (!isPgError) {
       throw new DatabaseException(
-        (e as { message?: string })?.message ??
+        (error as { message?: string })?.message ??
           message ??
           "Unexpected database error",
-        e,
+        undefined,
+        error,
       );
     }
+
+    const e = error as { code: string; message: string };
 
     switch (e.code) {
       case "57014": // Query canceled / timeout
@@ -895,7 +906,7 @@ export abstract class BaseAdapter extends EventEmitter {
 
       default:
         // For unmapped codes, rethrow to avoid masking potential issues
-        throw e;
+        throw error;
     }
   }
 
@@ -968,7 +979,10 @@ export abstract class BaseAdapter extends EventEmitter {
 
   protected getSQLIndex(table: string, name: string): string {
     const base = `${this.$schema}_${this._meta.namespace}_${table}_${name}`;
-    const safeId = createHash("sha1").update(base).digest("hex").slice(0, 40);
+    // Bun-native hashing — significantly faster than node:crypto for short strings
+    const hasher = new Bun.CryptoHasher("sha1");
+    hasher.update(base);
+    const safeId = hasher.digest("hex").slice(0, 40);
     return this.quote(`${safeId}`);
   }
 

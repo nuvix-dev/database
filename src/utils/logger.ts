@@ -1,14 +1,25 @@
-import fs from "fs";
-import path from "path";
-import chalk from "chalk";
+import fs from "node:fs";
+import path from "node:path";
 
 type LogLevel = "error" | "warn" | "info" | "debug";
 
-const LEVEL_COLORS: Record<LogLevel, typeof chalk> = {
-  error: chalk.red,
-  warn: chalk.yellow,
-  info: chalk.green,
-  debug: chalk.blue,
+// ANSI escape codes — replaces chalk dependency entirely
+const ANSI = {
+  reset: "\x1b[0m",
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  green: "\x1b[32m",
+  blue: "\x1b[34m",
+  gray: "\x1b[90m",
+  magenta: "\x1b[35m",
+  white: "\x1b[37m",
+} as const;
+
+const LEVEL_COLORS: Record<LogLevel, string> = {
+  error: ANSI.red,
+  warn: ANSI.yellow,
+  info: ANSI.green,
+  debug: ANSI.blue,
 };
 
 export interface LoggerOptions {
@@ -30,10 +41,10 @@ export class Logger {
   private logFilePath?: string;
   private maxFileSize: number;
 
-  private writeStream?: fs.WriteStream;
+  private writer?: ReturnType<ReturnType<typeof Bun.file>["writer"]>;
   private logBuffer: string[] = [];
   private flushIntervalMs = 100;
-  private flushTimer?: NodeJS.Timeout;
+  private flushTimer?: ReturnType<typeof setInterval>;
 
   private serializers = new Map<Function, Serializer>();
 
@@ -48,7 +59,7 @@ export class Logger {
     this.maxFileSize = options?.maxFileSize ?? 5 * 1024 * 1024; // default 5MB
 
     if (this.logFilePath) {
-      this.initWriteStream();
+      this.initWriter();
     }
 
     // Register default error serializer
@@ -57,35 +68,35 @@ export class Logger {
     });
   }
 
-  private initWriteStream() {
+  private initWriter() {
     try {
-      if (!fs.existsSync(path.dirname(this.logFilePath!))) {
-        fs.mkdirSync(path.dirname(this.logFilePath!), { recursive: true });
+      const dir = path.dirname(this.logFilePath!);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
       }
-      this.writeStream = fs.createWriteStream(this.logFilePath!, {
-        flags: "a",
-      });
+      // Use Bun.file().writer() for high-perf buffered writes
+      this.writer = Bun.file(this.logFilePath!).writer();
       this.flushTimer = setInterval(
         () => this.flushBuffer(),
         this.flushIntervalMs,
       );
     } catch (err) {
-      console.error("Logger: Failed to initialize write stream", err);
+      console.error("Logger: Failed to initialize writer", err);
     }
   }
 
   private rotateFileIfNeeded() {
-    if (!this.writeStream || !this.logFilePath) return;
+    if (!this.writer || !this.logFilePath) return;
     try {
       const stats = fs.statSync(this.logFilePath);
       if (stats.size >= this.maxFileSize) {
-        this.writeStream.close();
+        this.writer.end();
         const rotatedPath =
           this.logFilePath +
           "." +
           new Date().toISOString().replace(/[:.]/g, "-");
         fs.renameSync(this.logFilePath, rotatedPath);
-        this.initWriteStream();
+        this.initWriter();
       }
     } catch {
       // Ignore stat errors (e.g., file not found)
@@ -93,9 +104,10 @@ export class Logger {
   }
 
   private flushBuffer() {
-    if (!this.writeStream || this.logBuffer.length === 0) return;
+    if (!this.writer || this.logBuffer.length === 0) return;
     const data = this.logBuffer.join("\n") + "\n";
-    this.writeStream.write(data);
+    this.writer.write(data);
+    this.writer.flush();
     this.logBuffer.length = 0;
   }
 
@@ -127,12 +139,14 @@ export class Logger {
   }
 
   private formatMessage(level: LogLevel, message: string, ...args: any[]) {
-    const color = LEVEL_COLORS[level] || chalk.white;
+    const color = LEVEL_COLORS[level] || ANSI.white;
     const timeStr = this.timestamp
-      ? chalk.gray(new Date().toISOString()) + " "
+      ? `${ANSI.gray}${new Date().toISOString()}${ANSI.reset} `
       : "";
-    const contextStr = this.context ? chalk.magenta(`[${this.context}] `) : "";
-    const levelStr = color(level.toUpperCase().padEnd(5));
+    const contextStr = this.context
+      ? `${ANSI.magenta}[${this.context}]${ANSI.reset} `
+      : "";
+    const levelStr = `${color}${level.toUpperCase().padEnd(5)}${ANSI.reset}`;
     const formattedArgs = args.length
       ? " " + args.map((a) => this.serializeArg(a)).join(" ")
       : "";
@@ -152,7 +166,7 @@ export class Logger {
     }
 
     // File output (no color codes)
-    if (this.writeStream) {
+    if (this.writer) {
       const plainText = output.replace(/\x1b\[[0-9;]*m/g, "");
       this.logBuffer.push(plainText);
       if (this.logBuffer.length > 1000) {
@@ -186,8 +200,8 @@ export class Logger {
       this.flushTimer = undefined;
     }
     this.flushBuffer();
-    if (this.writeStream) {
-      await new Promise<void>((resolve) => this.writeStream!.end(resolve));
+    if (this.writer) {
+      this.writer.end();
     }
   }
 
