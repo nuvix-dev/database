@@ -10,6 +10,7 @@ import {
 import type { CacheDriver } from "@cache/types.js";
 import { Filter, Filters } from "./types.js";
 import { Meta } from "@adapters/base.js";
+import { JsonParam } from "@adapters/types.js";
 import { filters } from "@utils/filters.js";
 import { Doc } from "./doc.js";
 import {
@@ -790,8 +791,18 @@ export abstract class Base<
       if (!array) {
         value = value[0];
       }
-      if (attribute.type === AttributeEnum.Json && typeof value === "object") {
-        value = JSON.stringify(value);
+      // Json values must reach the driver as native objects/arrays so they
+      // are stored as real jsonb documents. Pre-stringifying caused
+      // double-encoding (values stored as jsonb string scalars), which made
+      // JSON-path operators (->, ->>) return NULL and silently break
+      // filters. The marker prevents bindValues() from flattening Json
+      // arrays into Postgres array literals.
+      if (
+        attribute.type === AttributeEnum.Json &&
+        value !== null &&
+        typeof value === "object"
+      ) {
+        value = new JsonParam(value);
       }
       document.set(key, value);
     }
@@ -860,9 +871,11 @@ export abstract class Base<
       let values = document.get(key);
       const items =
         attribute.type === AttributeEnum.Json
-          ? values && typeof values === "string"
-            ? [JSON.parse(values)]
-            : [values] // TODO: ------------
+          ? values instanceof JsonParam
+            ? [values.value]
+            : values && typeof values === "string"
+              ? [JSON.parse(values)] // legacy rows stored as string scalars
+              : [values]
           : Array.isArray(values)
             ? values
             : values != null || attribute.type === AttributeEnum.Virtual

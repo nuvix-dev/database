@@ -158,17 +158,28 @@ export class Filter extends Base {
   }
 
   /**
+   * Resolves an attribute key to its root schema attribute.
+   * JSON path lookups ("attr->path" / "attr->>path") are resolved to "attr",
+   * regardless of how many path segments are present.
+   * Keys that already exist in the schema are returned unchanged.
+   * @param attribute - The attribute key, possibly a JSON path.
+   * @returns {string} The root attribute key resolvable in the schema.
+   */
+  private resolveRootAttribute(attribute: string): string {
+    if (this.schema[attribute]) {
+      return attribute;
+    }
+    return attribute.split(/->>?/)[0]!.trim();
+  }
+
+  /**
    * Checks if the attribute exists in the schema and is a valid target for filtering.
    * @param attribute - The name of the attribute.
    * @returns {boolean} True if the attribute is valid, false otherwise.
    */
   protected validateAttributeSchema(attribute: string): boolean {
-    if (attribute.includes("->>") && !this.schema[attribute]) {
-      attribute = attribute.split("->>")[0]!;
-    } else if (attribute.includes("->") && !this.schema[attribute]) {
-      attribute = attribute.split("->")[0]!;
-    }
-    const attributeSchema = this.schema[attribute!];
+    attribute = this.resolveRootAttribute(attribute);
+    const attributeSchema = this.schema[attribute];
     if (!attributeSchema) {
       this.message = `Attribute not found in schema: "${attribute}".`;
       return false;
@@ -229,12 +240,7 @@ export class Filter extends Base {
       return false;
     }
 
-    if (attribute.includes("->>") && !this.schema[attribute]) {
-      attribute = attribute.split("->>")[0]!;
-    } else if (attribute.includes("->") && !this.schema[attribute]) {
-      attribute = attribute.split("->")[0]!;
-    }
-
+    attribute = this.resolveRootAttribute(attribute);
     const attributeSchema = this.schema[attribute]!;
 
     if (values.length > this.maxValuesCount) {
@@ -305,12 +311,8 @@ export class Filter extends Base {
   ): boolean {
     const attributeType = attributeSchema.type;
     let validator:
-      | DatetimeValidator
-      | Integer
-      | FloatValidator
-      | Boolean
-      | Text
-      | null = null;
+      DatetimeValidator | Integer | FloatValidator | Boolean | Text | null =
+      null;
 
     switch (attributeType) {
       case AttributeEnum.String:

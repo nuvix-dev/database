@@ -81,3 +81,18 @@ export interface CreateRelationship {
   };
   junctionCollection?: string;
 }
+
+/**
+ * Marker wrapper for Json attribute values on the write path.
+ *
+ * Values must reach the SQL driver as native objects/arrays so they are
+ * stored as real jsonb documents. Pre-stringifying caused double-encoding
+ * (values stored as jsonb string scalars), which made JSON-path operators
+ * (`->`, `->>`) return NULL and silently break filters. The marker also lets
+ * `bindValues()` distinguish a jsonb document from a Postgres array literal
+ * parameter: wrapped values are passed through untouched, never flattened
+ * into `{...}` array-literal strings.
+ */
+export class JsonParam {
+  constructor(public readonly value: unknown) {}
+}

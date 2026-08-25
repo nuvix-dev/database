@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import { TransactionException } from "@errors/index.js";
 import { Logger } from "@utils/logger.js";
+import { JsonParam } from "./types.js";
 
 /**
  * Minimal structural type for PostgreSQL server errors surfaced by Bun.sql.
@@ -288,9 +289,13 @@ function toPostgresArrayLiteral(value: readonly unknown[]): string {
 
 /** Prepares bound values for Bun.sql, replicating node-pg serialization. */
 function bindValues(values?: unknown[]): unknown[] | undefined {
-  return values?.map((value) =>
-    Array.isArray(value) ? toPostgresArrayLiteral(value) : value,
-  );
+  return values?.map((value) => {
+    // Json attribute values are real jsonb documents: pass them through so
+    // the driver serializes them natively (objects AND arrays). Never
+    // flatten them into Postgres array literals.
+    if (value instanceof JsonParam) return value.value;
+    return Array.isArray(value) ? toPostgresArrayLiteral(value) : value;
+  });
 }
 
 /**
