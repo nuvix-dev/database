@@ -1,0 +1,16 @@
+{
+  "name": "@nuvix/db-benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone benchmarks for @nuvix/db (local source vs published npm versions). Not part of the published package.",
+  "scripts": {
+    "bench": "bun run compare-with-npm.ts"
+  },
+  "devDependencies": {
+    "@nuvix/cache": "^1.0.3-alpha.1",
+    "@nuvix/db-npm": "npm:@nuvix/db@0.2.5",
+    "@types/bun": "^1.4.0",
+    "pg": "^8.23.0"
+  }
+}
