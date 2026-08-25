@@ -59,8 +59,11 @@ export function generateTypes(
   const parts: string[] = [];
 
   // Import statements
+  // Note: IEntity is intentionally NOT imported here — a local definition is
+  // emitted below so generated files are self-describing (importing it as well
+  // would conflict with the local declaration).
   if (includeImports) {
-    const imports = `import { Doc, IEntity } from "${packageName}";`;
+    const imports = `import { Doc } from "${packageName}";`;
     parts.push(imports);
     parts.push(IENTITY_DEFINITION);
   }

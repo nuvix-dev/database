@@ -171,6 +171,12 @@ describe("generateTypes", () => {
 
     expect(result).toContain("required_field: string");
     expect(result).toContain("optional_field?: string");
+
+    // Regression: the emitted import must not include IEntity — a local
+    // definition is emitted alongside it, and importing both would produce
+    // TS2440 (import conflicts with local declaration).
+    expect(result).toContain(`import { Doc } from "@nuvix/db";`);
+    expect(result).not.toContain("IEntity } from");
   });
 
   it("handles enum literal types correctly", () => {
@@ -563,7 +569,7 @@ describe("generateTypes", () => {
 
       const result = generateTypes(collections);
 
-      expect(result).toContain('import { Doc, IEntity } from "@nuvix/db";');
+      expect(result).toContain('import { Doc } from "@nuvix/db";');
       expect(result).toContain("export type UsersDoc = Doc<Users>;");
       expect(result).toContain("export type PostsDoc = Doc<Posts>;");
     });
@@ -625,7 +631,7 @@ describe("generateTypes", () => {
       });
 
       expect(result).toContain(
-        'import { Doc, IEntity } from "@custom/db-package";',
+        'import { Doc } from "@custom/db-package";',
       );
     });
 
