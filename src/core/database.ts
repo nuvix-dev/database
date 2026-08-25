@@ -22,7 +22,7 @@ import {
   UpdateRelationshipAttribute,
 } from "./types.js";
 import { Cache } from "./cache.js";
-import { Cache as NuvixCache } from "@nuvix/cache";
+import type { CacheDriver } from "@cache/types.js";
 import { Entities, IEntity } from "types.js";
 import { QueryBuilder } from "@utils/query-builder.js";
 import { Query } from "./query.js";
@@ -51,6 +51,24 @@ import { Structure } from "@validators/structure.js";
 import { Adapter } from "@adapters/adapter.js";
 import { IndexDependency } from "@validators/index-dependency.js";
 import { MethodType } from "@validators/query/base.js";
+import {
+  createIndex,
+  deleteIndex,
+  renameIndex,
+  updateIndexMeta,
+} from "./index-manager.js";
+import {
+  createRelationship,
+  deleteRelationship,
+  updateRelationship,
+} from "./relationship-schema.js";
+import {
+  createRelationships,
+  deleteDocumentRelationships,
+  handleManyToMany,
+  handleOnDelete,
+  updateDocumentRelationships,
+} from "./document-relationships.js";
 
 export class Database extends Cache {
   private static readonly NUMERIC_ATTRIBUTE_TYPES: ReadonlySet<AttributeEnum> =
@@ -58,7 +76,7 @@ export class Database extends Cache {
 
   constructor(
     adapter: Adapter,
-    cache: NuvixCache,
+    cache: CacheDriver,
     options: DatabaseOptions = {},
   ) {
     super(adapter, cache, options);
@@ -547,43 +565,17 @@ export class Database extends Cache {
       indexPosition: number,
     ) => void,
   ): Promise<Doc<Index>> {
-    let collection = await this.silent(() => this.getCollection(collectionId));
-
-    if (collection.getId() === Database.METADATA) {
-      throw new DatabaseException("Cannot update metadata indexes");
-    }
-
-    const indexes = collection.get("indexes", []);
-    const indexPosition = indexes.findIndex(
-      (index: Doc<Index>) => index.get("$id") === id,
-    );
-
-    if (indexPosition === -1) {
-      throw new NotFoundException("Index not found");
-    }
-
-    // Execute update from callback
-    updateCallback(indexes[indexPosition]!, collection, indexPosition);
-
-    // Save
-    collection.set("indexes", indexes);
-    await this.silent(() =>
-      this.updateDocument(Database.METADATA, collection.getId(), collection),
-    );
-
-    this.trigger(
-      EventsEnum.AttributeUpdate,
-      collection,
-      indexes[indexPosition]!,
-    );
-
-    return indexes[indexPosition]!;
+    return updateIndexMeta(this, collectionId, id, updateCallback);
   }
 
   /**
    * Update attribute metadata. Utility method for update attribute methods.
+   *
+   * Public (widened from protected) so the extracted relationship-schema
+   * module can drive metadata updates through the Database instance —
+   * standalone functions cannot access protected members.
    */
-  protected async updateAttributeMeta(
+  public async updateAttributeMeta(
     collectionId: string,
     id: string,
     updateCallback: (
@@ -1032,225 +1024,15 @@ export class Database extends Cache {
     twoWayKey,
     onDelete = OnDelete.Restrict,
   }: CreateRelationshipAttribute): Promise<boolean> {
-    const collection = await this.silent(() =>
-      this.getCollection(collectionId, true),
-    );
-    const relatedCollection = await this.silent(() =>
-      this.getCollection(relatedCollectionId),
-    );
-
-    if (relatedCollection.empty()) {
-      throw new NotFoundException("Related collection not found");
-    }
-
-    id ??= relatedCollection.getId();
-    twoWayKey ??= collection.getId();
-
-    const attributes = collection.get("attributes", []);
-    for (const attribute of attributes) {
-      if (attribute.get("$id").toLowerCase() === id.toLowerCase()) {
-        throw new DuplicateException("Attribute already exists");
-      }
-
-      const options = attribute.get("options", {});
-      if (
-        attribute.get("type") === AttributeEnum.Relationship &&
-        options.twoWayKey?.toLowerCase() === twoWayKey.toLowerCase() &&
-        options.relatedCollection === relatedCollection.getId()
-      ) {
-        throw new DuplicateException("Related attribute already exists");
-      }
-    }
-
-    const relationship = new Doc<Attribute>({
-      $id: id,
-      key: id,
-      type: AttributeEnum.Relationship,
-      required: false,
-      default: null,
-      options: {
-        relatedCollection: relatedCollection.getId(),
-        relationType: type,
-        twoWay: twoWay,
-        twoWayKey: twoWayKey,
-        onDelete: onDelete,
-        side: RelationSideEnum.Parent,
-      },
-    });
-
-    const twoWayRelationship = new Doc<Attribute>({
-      $id: twoWayKey,
-      key: twoWayKey,
-      type: AttributeEnum.Relationship,
-      required: false,
-      default: null,
-      options: {
-        relatedCollection: collection.getId(),
-        relationType: type,
-        twoWay: twoWay,
-        twoWayKey: id,
-        onDelete: onDelete,
-        side: RelationSideEnum.Child,
-      },
-    });
-
-    this.checkAttribute(collection, relationship);
-    this.checkAttribute(relatedCollection, twoWayRelationship);
-
-    collection.append("attributes", relationship);
-    relatedCollection.append("attributes", twoWayRelationship);
-
-    if (type === RelationEnum.ManyToMany) {
-      const junctionCollectionName = this.getJunctionTable(
-        collection.getSequence(),
-        relatedCollection.getSequence(),
-        relationship.getId(),
-        twoWayRelationship.getId(),
-      );
-      await this.silent(() =>
-        this.createCollection({
-          id: junctionCollectionName,
-          attributes: [
-            new Doc<Attribute>({
-              $id: id,
-              key: id,
-              type: AttributeEnum.String,
-              size: this.adapter.$limitForString,
-              required: true,
-            }),
-            new Doc<Attribute>({
-              $id: twoWayKey,
-              key: twoWayKey,
-              type: AttributeEnum.String,
-              size: this.adapter.$limitForString,
-              required: true,
-            }),
-          ],
-          indexes: [
-            new Doc<Index>({
-              $id: `_index_${id}`,
-              key: `_index_${id}`,
-              type: IndexEnum.Key,
-              attributes: [id],
-            }),
-            new Doc<Index>({
-              $id: `_index_${twoWayKey}`,
-              key: `_index_${twoWayKey}`,
-              type: IndexEnum.Key,
-              attributes: [twoWayKey],
-            }),
-          ],
-        }),
-      );
-    }
-
-    const created = await this.adapter.createRelationship(
-      collection.getId(),
-      relatedCollection.getId(),
+    return createRelationship(this, {
+      collectionId,
+      relatedCollectionId,
       type,
       twoWay,
       id,
       twoWayKey,
-    );
-
-    if (!created) {
-      throw new DatabaseException("Failed to create relationship");
-    }
-
-    await this.silent(async () => {
-      try {
-        await this.withTransaction(async (db) => {
-          await db.updateDocument(
-            Database.METADATA,
-            collection.getId(),
-            collection,
-          );
-          await db.updateDocument(
-            Database.METADATA,
-            relatedCollection.getId(),
-            relatedCollection,
-          );
-        });
-      } catch (error: any) {
-        try {
-          await this.silent(() => {
-            if (type === RelationEnum.ManyToMany) {
-              // If the relationship is ManyToMany, we need to delete the junction collection
-              return this.adapter.deleteCollection(
-                this.getJunctionTable(
-                  collection.getSequence(),
-                  relatedCollection.getSequence(),
-                  id,
-                  twoWayKey,
-                ),
-              ) as any;
-            } else
-              return this.adapter.deleteRelationship(
-                collection.getId(),
-                relatedCollection.getId(),
-                type,
-                twoWay,
-                id,
-                twoWayKey,
-                RelationSideEnum.Parent,
-              );
-          });
-        } catch {}
-        throw new DatabaseException(
-          `Failed to create relationship: ${error.message}`,
-        );
-      }
-
-      const indexKey = `_index_${id}`;
-      const twoWayIndexKey = `_index_${twoWayKey}`;
-
-      switch (type) {
-        case RelationEnum.OneToOne:
-          await this.createIndex(
-            collection.getId(),
-            indexKey,
-            IndexEnum.Unique,
-            [id],
-          );
-          if (twoWay) {
-            await this.createIndex(
-              relatedCollection.getId(),
-              twoWayIndexKey,
-              IndexEnum.Unique,
-              [twoWayKey],
-            );
-          }
-          break;
-        case RelationEnum.OneToMany:
-          await this.createIndex(
-            relatedCollection.getId(),
-            twoWayIndexKey,
-            IndexEnum.Key,
-            [twoWayKey],
-          );
-          break;
-        case RelationEnum.ManyToOne:
-          await this.createIndex(collection.getId(), indexKey, IndexEnum.Key, [
-            id,
-          ]);
-          break;
-        case RelationEnum.ManyToMany:
-          // Indexes are created during junction collection creation
-          break;
-        default:
-          throw new DatabaseException("Invalid relationship type.");
-      }
+      onDelete,
     });
-
-    this.trigger(
-      EventsEnum.RelationshipCreate,
-      collection,
-      relationship,
-      relatedCollection,
-      twoWayRelationship,
-    );
-
-    return true;
   }
 
   /**
@@ -1264,194 +1046,14 @@ export class Database extends Cache {
     twoWay,
     onDelete,
   }: UpdateRelationshipAttribute): Promise<boolean> {
-    if (!newKey && !newTwoWayKey && twoWay === undefined && !onDelete) {
-      return true;
-    }
-
-    const collection = await this.silent(() =>
-      this.getCollection(collectionId, true),
-    );
-    const attributes = collection.get("attributes", []);
-
-    if (newKey && attributes.some((attr) => attr.get("key") === newKey)) {
-      throw new DuplicateException("Relationship already exists");
-    }
-
-    const attributeIndex = attributes.findIndex(
-      (attr) => attr.get("$id") === id,
-    );
-    if (attributeIndex === -1) {
-      throw new NotFoundException("Relationship not found");
-    }
-
-    const attribute = attributes[attributeIndex]!;
-    const type = attribute.get("options")["relationType"];
-    const side = attribute.get("options")["side"];
-
-    if (type === RelationEnum.ManyToMany && (newTwoWayKey || newKey)) {
-      throw new DatabaseException("Cannot update ManyToMany relationship.");
-    }
-
-    const relatedCollectionId = attribute.get("options")["relatedCollection"];
-    const relatedCollection = await this.silent(() =>
-      this.getCollection(relatedCollectionId),
-    );
-
-    await this.updateAttributeMeta(collection.getId(), id, async (attr) => {
-      const altering =
-        (newKey && newKey !== id) ||
-        (newTwoWayKey && newTwoWayKey !== attr.get("options")["twoWayKey"]);
-
-      const relatedAttributes = relatedCollection.get("attributes", []);
-      if (
-        newTwoWayKey &&
-        relatedAttributes.some((attr) => attr.get("key") === newTwoWayKey)
-      ) {
-        throw new DuplicateException("Related attribute already exists");
-      }
-
-      newKey ??= attr.get("key");
-      const twoWayKey = attr.get("options")["twoWayKey"];
-      newTwoWayKey ??= twoWayKey;
-      twoWay ??= attr.get("options")["twoWay"];
-      onDelete ??= attr.get("options.onDelete");
-
-      attr.set("$id", newKey).set("key", newKey).set("options", {
-        relatedCollection: relatedCollection.getId(),
-        relationType: type,
-        twoWay,
-        twoWayKey: newTwoWayKey,
-        onDelete,
-        side,
-      });
-
-      await this.updateAttributeMeta(
-        relatedCollection.getId(),
-        twoWayKey,
-        (relatedAttr) => {
-          relatedAttr
-            .set("$id", newTwoWayKey)
-            .set("key", newTwoWayKey)
-            .set("options", {
-              ...relatedAttr.get("options"),
-              twoWayKey: newKey,
-              twoWay,
-              onDelete,
-            });
-        },
-      );
-
-      // if (type === RelationEnum.ManyToMany) {
-      //     const junction = this.getJunctionTable(
-      //         collection.getSequence(),
-      //         relatedCollection.getSequence(),
-      //         id,
-      //         twoWayKey
-      //     );
-
-      //     await this.renameAttribute(junction, id, newKey);
-      //     newTwoWayKey !== undefined && await this.renameAttribute(junction, twoWayKey, newTwoWayKey);
-      //     await this.purgeCachedCollection(junction);
-      // }
-
-      if (altering) {
-        const updated = await this.adapter.updateRelationship(
-          collection.getId(),
-          relatedCollection.getId(),
-          type,
-          twoWay,
-          id,
-          twoWayKey,
-          side,
-          newKey,
-          newTwoWayKey,
-        );
-
-        if (!updated) {
-          throw new DatabaseException("Failed to update relationship");
-        }
-      }
+    return updateRelationship(this, {
+      collectionId,
+      id,
+      newKey,
+      newTwoWayKey,
+      twoWay,
+      onDelete,
     });
-
-    const renameIndex = async (
-      collectionId: string,
-      key: string,
-      newKey: string,
-    ) => {
-      await this.updateIndexMeta(collectionId, `_index_${key}`, (index) => {
-        index.set("attributes", [newKey]);
-      });
-      await this.silent(() =>
-        this.renameIndex(collectionId, `_index_${key}`, `_index_${newKey}`),
-      );
-    };
-
-    newKey ??= attribute.get("key");
-    const twoWayKey: string = attribute.get("options")["twoWayKey"];
-    newTwoWayKey ??= twoWayKey;
-
-    switch (type) {
-      case RelationEnum.OneToOne:
-        if (id !== newKey) {
-          await renameIndex(collection.getId(), id, newKey);
-        }
-        if (twoWay && twoWayKey !== newTwoWayKey) {
-          await renameIndex(relatedCollection.getId(), twoWayKey, newTwoWayKey);
-        }
-        break;
-      case RelationEnum.OneToMany:
-        if (side === RelationSideEnum.Parent) {
-          if (twoWayKey !== newTwoWayKey) {
-            await renameIndex(
-              relatedCollection.getId(),
-              twoWayKey,
-              newTwoWayKey,
-            );
-          }
-        } else {
-          if (id !== newKey) {
-            await renameIndex(collection.getId(), id, newKey);
-          }
-        }
-        break;
-      case RelationEnum.ManyToOne:
-        if (side === RelationSideEnum.Parent) {
-          if (id !== newKey) {
-            await renameIndex(collection.getId(), id, newKey);
-          }
-        } else {
-          if (twoWayKey !== newTwoWayKey) {
-            await renameIndex(
-              relatedCollection.getId(),
-              twoWayKey,
-              newTwoWayKey,
-            );
-          }
-        }
-        break;
-      case RelationEnum.ManyToMany:
-        // const junction = this.getJunctionTable(
-        //     collection.getSequence(),
-        //     relatedCollection.getSequence(),
-        //     id,
-        //     twoWayKey
-        // );
-
-        // if (id !== newKey) {
-        //     await renameIndex(junction, id, newKey);
-        // }
-        // if (twoWayKey !== newTwoWayKey) {
-        //     await renameIndex(junction, twoWayKey, newTwoWayKey);
-        // }
-        break;
-      default:
-        throw new DatabaseException("Invalid relationship type.");
-    }
-
-    await this.purgeCachedCollection(collection.getId());
-    await this.purgeCachedCollection(relatedCollection.getId());
-
-    return true;
   }
 
   /**
@@ -1461,133 +1063,7 @@ export class Database extends Cache {
     collectionId: string,
     id: string,
   ): Promise<boolean> {
-    const collection = await this.silent(() =>
-      this.getCollection(collectionId),
-    );
-    const attributes = collection.get("attributes", []);
-    let relationship: Doc<Attribute> | null = null;
-    let relationshipIndex = -1;
-
-    for (let i = 0; i < attributes.length; i++) {
-      if (attributes[i]!.get("$id") === id) {
-        relationship = attributes[i]!;
-        relationshipIndex = i;
-        break;
-      }
-    }
-
-    if (!relationship) {
-      throw new NotFoundException("Relationship not found");
-    }
-
-    // Remove relationship from collection attributes
-    attributes.splice(relationshipIndex, 1);
-    collection.set("attributes", attributes);
-
-    const options = relationship.get("options", {}) as RelationOptions;
-    const relatedCollectionId = options.relatedCollection;
-    const type = options.relationType;
-    const twoWay = Boolean(options.twoWay);
-    const twoWayKey = options.twoWayKey;
-    const side = options.side;
-
-    const relatedCollection = await this.silent(() =>
-      this.getCollection(relatedCollectionId),
-    );
-    const relatedAttributes = relatedCollection.get("attributes", []);
-
-    // Remove two-way relationship from related collection
-    const updatedRelatedAttributes = relatedAttributes.filter(
-      (attr) => attr.get("$id") !== twoWayKey,
-    );
-    relatedCollection.set("attributes", updatedRelatedAttributes);
-
-    await this.silent(async () => {
-      try {
-        await this.withTransaction(async (db) => {
-          await db.updateDocument(
-            Database.METADATA,
-            collection.getId(),
-            collection,
-          );
-          await db.updateDocument(
-            Database.METADATA,
-            relatedCollection.getId(),
-            relatedCollection,
-          );
-        });
-      } catch (error: any) {
-        throw new DatabaseException(
-          `Failed to delete relationship: ${error.message}`,
-        );
-      }
-
-      const indexKey = `_index_${id}`;
-      const twoWayIndexKey = `_index_${twoWayKey}`;
-
-      switch (type) {
-        case RelationEnum.OneToOne:
-          if (side === RelationSideEnum.Parent) {
-            await this.deleteIndex(collection.getId(), indexKey);
-            if (twoWay) {
-              await this.deleteIndex(relatedCollection.getId(), twoWayIndexKey);
-            }
-          }
-          if (side === RelationSideEnum.Child) {
-            await this.deleteIndex(relatedCollection.getId(), twoWayIndexKey);
-            if (twoWay) {
-              await this.deleteIndex(collection.getId(), indexKey);
-            }
-          }
-          break;
-        case RelationEnum.OneToMany:
-          if (side === RelationSideEnum.Parent) {
-            await this.deleteIndex(relatedCollection.getId(), twoWayIndexKey);
-          } else {
-            await this.deleteIndex(collection.getId(), indexKey);
-          }
-          break;
-        case RelationEnum.ManyToOne:
-          if (side === RelationSideEnum.Parent) {
-            await this.deleteIndex(collection.getId(), indexKey);
-          } else {
-            await this.deleteIndex(relatedCollection.getId(), twoWayIndexKey);
-          }
-          break;
-        case RelationEnum.ManyToMany:
-          const junctionCollectionName = this.getJunctionTable(
-            collection.getSequence(),
-            relatedCollection.getSequence(),
-            id,
-            twoWayKey!,
-          );
-          await this.deleteCollection(junctionCollectionName);
-          break;
-        default:
-          throw new RelationshipException("Invalid relationship type.");
-      }
-    });
-
-    const deleted = await this.adapter.deleteRelationship(
-      collection.getId(),
-      relatedCollection.getId(),
-      type,
-      twoWay,
-      id,
-      twoWayKey!,
-      side,
-    );
-
-    if (!deleted) {
-      throw new DatabaseException("Failed to delete relationship");
-    }
-
-    await this.purgeCachedCollection(collection.getId());
-    await this.purgeCachedCollection(relatedCollection.getId());
-
-    this.trigger(EventsEnum.AttributeDelete, collection, relationship);
-
-    return true;
+    return deleteRelationship(this, collectionId, id);
   }
 
   /**
@@ -1598,41 +1074,7 @@ export class Database extends Cache {
     oldName: string,
     newName: string,
   ): Promise<boolean> {
-    const collection = await this.silent(() =>
-      this.getCollection(collectionId),
-    );
-
-    if (collection.empty()) {
-      throw new NotFoundException(`Collection '${collectionId}' not found`);
-    }
-
-    const indexes = collection.get("indexes", []);
-    const index = indexes.find((idx: Doc<Index>) => idx.get("$id") === oldName);
-
-    if (!index) {
-      throw new NotFoundException(`Index '${oldName}' not found`);
-    }
-
-    if (indexes.some((idx: Doc<Index>) => idx.get("$id") === newName)) {
-      throw new DuplicateException(`Index name '${newName}' already used`);
-    }
-
-    index.set("$id", newName);
-    index.set("key", newName);
-
-    collection.set("indexes", indexes);
-
-    await this.adapter.renameIndex(collection.getId(), oldName, newName);
-
-    if (collection.getId() !== Database.METADATA) {
-      await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
-      );
-    }
-
-    this.trigger(EventsEnum.IndexRename, collection, index, oldName);
-
-    return true;
+    return renameIndex(this, collectionId, oldName, newName);
   }
 
   /**
@@ -1645,160 +1087,22 @@ export class Database extends Cache {
     attributes: string[],
     orders: (string | null)[] = [],
   ): Promise<boolean> {
-    if (attributes.length === 0) {
-      throw new DatabaseException("Missing attributes");
-    }
-
-    const collection = await this.silent(() =>
-      this.getCollection(collectionId, true),
+    return createIndex(
+      this,
+      this.validate,
+      collectionId,
+      id,
+      type,
+      attributes,
+      orders,
     );
-
-    const indexes = collection.get("indexes", []);
-    if (
-      indexes.some(
-        (index: Doc<Index>) =>
-          index.get("$id").toLowerCase() === id.toLowerCase(),
-      )
-    ) {
-      throw new DuplicateException("Index already exists");
-    }
-
-    if (
-      this.adapter.getCountOfIndexes(collection) >=
-      this.adapter.$limitForIndexes
-    ) {
-      throw new LimitException("Index limit reached. Cannot create new index.");
-    }
-
-    switch (type) {
-      case IndexEnum.Key:
-        if (!this.adapter.$supportForIndex) {
-          throw new DatabaseException("Key index is not supported");
-        }
-        break;
-      case IndexEnum.Unique:
-        if (!this.adapter.$supportForUniqueIndex) {
-          throw new DatabaseException("Unique index is not supported");
-        }
-        break;
-      case IndexEnum.FullText:
-        if (!this.adapter.$supportForFulltextIndex) {
-          throw new DatabaseException("Fulltext index is not supported");
-        }
-        break;
-      default:
-        throw new DatabaseException(
-          `Unknown index type: ${type}. Must be one of [${Object.values(IndexEnum).join(", ")}]`,
-        );
-    }
-
-    const collectionAttributes = collection.get("attributes", []);
-    const indexAttributesWithTypes: Record<string, Attribute> = {};
-
-    attributes.forEach((attr, i) => {
-      const collectionAttribute = collectionAttributes.find(
-        (attribute: Doc<Attribute>) => attribute.get("key") === attr,
-      );
-      if (!collectionAttribute) {
-        throw new DatabaseException(
-          `Attribute '${attr}' not found in collection '${collectionId}'`,
-        );
-      }
-
-      indexAttributesWithTypes[attr] = collectionAttribute.toObject();
-      if (collectionAttribute.get("array", false)) {
-        orders[i] = null;
-      }
-    });
-
-    const index = new Doc<Index>({
-      $id: id,
-      key: id,
-      type: type,
-      attributes: attributes,
-      orders: orders,
-    });
-
-    collection.append("indexes", index);
-
-    if (this.validate) {
-      const validator = new IndexValidator(
-        collectionAttributes,
-        this.adapter.$maxIndexLength,
-        this.adapter.$internalIndexesKeys,
-        this.adapter.$supportForIndexArray,
-      );
-      if (!validator.$valid(index)) {
-        throw new IndexException(validator.$description);
-      }
-    }
-
-    try {
-      const created = await this.adapter.createIndex({
-        collection: collection.getId(),
-        name: id,
-        type,
-        attributes,
-        orders,
-        attributeTypes: indexAttributesWithTypes,
-      });
-
-      if (!created) {
-        throw new DatabaseException("Failed to create index");
-      }
-    } catch (error) {
-      if (error instanceof DuplicateException) {
-        if (!this.adapter.$sharedTables || !this.migrating) {
-          throw error;
-        }
-      } else {
-        throw error;
-      }
-    }
-
-    if (collection.getId() !== Database.METADATA) {
-      await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
-      );
-    }
-
-    this.trigger(EventsEnum.IndexCreate, collection, index);
-
-    return true;
   }
 
   /**
    * Delete an index in a collection.
    */
   public async deleteIndex(collectionId: string, id: string): Promise<boolean> {
-    const collection = await this.silent(() =>
-      this.getCollection(collectionId),
-    );
-
-    const indexes = collection.get("indexes", []);
-
-    let indexDeleted: Doc<Index> | null = null;
-    const updatedIndexes = indexes.filter((index: Doc<Index>) => {
-      if (index.get("$id") === id) {
-        indexDeleted = index;
-        return false;
-      }
-      return true;
-    });
-
-    const deleted = await this.adapter.deleteIndex(collection.getId(), id);
-
-    collection.set("indexes", updatedIndexes);
-
-    if (collection.getId() !== Database.METADATA) {
-      await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
-      );
-    }
-
-    this.trigger(EventsEnum.IndexDelete, collection, indexDeleted);
-
-    return deleted;
+    return deleteIndex(this, collectionId, id);
   }
 
   /**
@@ -2064,111 +1368,34 @@ export class Database extends Cache {
     return decodedResult;
   }
 
+  /**
+   * Recursion-guard stack for relationship maintenance loops.
+   *
+   * Public (widened from the protected Base field `_relationStack`) so the
+   * extracted document-relationships module can guard against infinite
+   * recursion — standalone functions cannot access protected members.
+   */
+  public get relationStack(): Set<string> {
+    return this._relationStack;
+  }
+
+  /**
+   * Whether related documents must exist when linking relationships.
+   *
+   * Public (widened from the protected Base field `checkRelationshipsExist`)
+   * so the extracted document-relationships module can honor
+   * skipCheckRelationshipsExist — standalone functions cannot access
+   * protected members.
+   */
+  public get checksRelationshipsExist(): boolean {
+    return this.checkRelationshipsExist;
+  }
+
   private async createRelationships(
     collection: Doc<Collection>,
     document: Doc<any>,
   ): Promise<Doc<any>> {
-    const relationships = collection
-      .get("attributes", [])
-      .filter((attr) => attr.get("type") === AttributeEnum.Relationship);
-
-    for (const relationship of relationships) {
-      const options = relationship.get("options", {}) as RelationOptions;
-      const relatedCollectionId = options.relatedCollection;
-      if (!relatedCollectionId) continue;
-
-      const type = options.relationType;
-      const side = options.side;
-      const value = document.get(relationship.get("key"));
-      if (!value) continue;
-
-      // Prevent infinite recursion
-      const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.has(loopKey)) continue;
-      this._relationStack.add(loopKey);
-
-      try {
-        if (
-          type === RelationEnum.OneToOne ||
-          (type === RelationEnum.OneToMany &&
-            side === RelationSideEnum.Child) ||
-          (type === RelationEnum.ManyToOne && side === RelationSideEnum.Parent)
-        ) {
-          const relatedDoc = await this.silent(() =>
-            this.getDocument(options.relatedCollection, value),
-          );
-
-          if (relatedDoc.empty() && !this.checkRelationshipsExist) {
-            throw new RelationshipException(
-              `Related document '${value}' not found`,
-            );
-          }
-
-          if (type === RelationEnum.OneToOne) {
-            if (options.side === RelationSideEnum.Child && !options.twoWay) {
-              throw new DatabaseException(
-                `Cannot update OneToOne from child side without twoWay`,
-              );
-            }
-
-            if (options.twoWay) {
-              relatedDoc.set(options.twoWayKey!, document.getId());
-              await this.silent(() =>
-                this.skipCheckRelationshipsExist(() =>
-                  this.updateDocument(
-                    options.relatedCollection,
-                    value,
-                    relatedDoc,
-                  ),
-                ),
-              );
-            }
-          }
-        }
-
-        if (
-          type === RelationEnum.ManyToMany ||
-          (type === RelationEnum.OneToMany &&
-            side === RelationSideEnum.Parent) ||
-          (type === RelationEnum.ManyToOne && side === RelationSideEnum.Child)
-        ) {
-          const { setIds } = this.formatRelationValue(value);
-          if (!setIds) continue;
-          if (type === RelationEnum.ManyToMany) {
-            await this.handleManyToMany(
-              collection,
-              document,
-              relationship,
-              options,
-              setIds,
-            );
-          } else {
-            for (const childId of setIds) {
-              const childDoc = await this.silent(() =>
-                this.getDocument(options.relatedCollection, childId),
-              );
-              if (childDoc.empty() && !this.checkRelationshipsExist) {
-                throw new RelationshipException(`Child '${childId}' not found`);
-              }
-              childDoc.set(options.twoWayKey!, document.getId());
-              await this.silent(() =>
-                this.skipCheckRelationshipsExist(() =>
-                  this.updateDocument(
-                    options.relatedCollection,
-                    childId,
-                    childDoc,
-                  ),
-                ),
-              );
-            }
-          }
-          document.delete(relationship.get("key"));
-        }
-      } finally {
-        this._relationStack.delete(loopKey);
-      }
-    }
-    return document;
+    return createRelationships(this, collection, document);
   }
 
   /**
@@ -2183,94 +1410,16 @@ export class Database extends Cache {
     connectIds: string[] = [],
     disconnectIds: string[] = [],
   ): Promise<void> {
-    // Skip if nothing to do
-    if (
-      setIds === undefined &&
-      connectIds.length === 0 &&
-      disconnectIds.length === 0
-    ) {
-      return;
-    }
-
-    const relatedCollection = await this.silent(() =>
-      this.getCollection(options.relatedCollection, true),
+    return handleManyToMany(
+      this,
+      collection,
+      document,
+      relationship,
+      options,
+      setIds,
+      connectIds,
+      disconnectIds,
     );
-
-    const parentColl =
-      options.side === RelationSideEnum.Parent ? collection : relatedCollection;
-    const childColl =
-      options.side === RelationSideEnum.Parent ? relatedCollection : collection;
-    const parentAttr =
-      options.side === RelationSideEnum.Parent
-        ? relationship.getId()
-        : options.twoWayKey!;
-    const childAttr =
-      options.side === RelationSideEnum.Parent
-        ? options.twoWayKey!
-        : relationship.getId();
-    const junctionCollection = this.getJunctionTable(
-      parentColl.getSequence(),
-      childColl.getSequence(),
-      parentAttr,
-      childAttr,
-    );
-
-    if (setIds !== undefined) {
-      await Authorization.skip(() =>
-        this.silent(() =>
-          this.deleteDocuments(junctionCollection, [
-            Query.equal(relationship.getId(), [document.getId()]),
-          ]),
-        ),
-      );
-    } else if (disconnectIds.length > 0) {
-      await Authorization.skip(() =>
-        this.silent(() =>
-          this.deleteDocuments(junctionCollection, [
-            Query.equal(relationship.getId(), [document.getId()]),
-            Query.equal(options.twoWayKey!, disconnectIds),
-          ]),
-        ),
-      );
-    }
-
-    const targetIds = setIds !== undefined ? setIds : connectIds;
-    const uniqueTargetIds = Array.from(new Set(targetIds)); // de-dupe but keep insertion order
-
-    if (uniqueTargetIds.length > 0) {
-      const relatedDocs = await this.silent(() =>
-        this.find(options.relatedCollection, (qb) =>
-          qb.equal("$id", ...uniqueTargetIds),
-        ),
-      );
-
-      const foundIdsSet = new Set(relatedDocs.map((d) => d.getId()));
-      const missingIds = uniqueTargetIds.filter((id) => !foundIdsSet.has(id));
-
-      if (missingIds.length > 0) {
-        throw new RelationshipException(
-          `Some related documents were not found: ${missingIds.join(", ")}`,
-        );
-      }
-
-      const linkDocs = uniqueTargetIds.map(
-        (relatedId) =>
-          new Doc({
-            $id: ID.unique(),
-            [relationship.getId()]: document.getId(),
-            [options.twoWayKey!]: relatedId,
-            $permissions: [
-              Permission.read(Role.any()),
-              Permission.create(Role.any()),
-              Permission.delete(Role.any()),
-            ],
-          }),
-      );
-
-      await this.silent(() =>
-        this.createDocuments(junctionCollection, linkDocs),
-      );
-    }
   }
 
   /**
@@ -2548,178 +1697,7 @@ export class Database extends Cache {
     collection: Doc<Collection>,
     document: Doc<Record<string, any>>,
   ) {
-    const relationships = collection
-      .get("attributes", [])
-      .filter((attr) => attr.get("type") === AttributeEnum.Relationship);
-
-    for (const relationship of relationships) {
-      const options = relationship.get("options", {}) as RelationOptions;
-      const relatedCollectionId = options.relatedCollection;
-      if (!relatedCollectionId) continue;
-
-      const type = options.relationType;
-      const side = options.side;
-      const value = document.get(relationship.get("key"), undefined);
-
-      if (value === undefined) continue;
-
-      // Prevent infinite recursion
-      const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.has(loopKey)) continue;
-      this._relationStack.add(loopKey);
-
-      try {
-        if (
-          type === RelationEnum.OneToOne ||
-          (type === RelationEnum.OneToMany &&
-            side === RelationSideEnum.Child) ||
-          (type === RelationEnum.ManyToOne && side === RelationSideEnum.Parent)
-        ) {
-          if (value !== null && typeof value !== "string") {
-            throw new DatabaseException(
-              "Invalid value for relationship: must be a string or",
-            );
-          }
-
-          const relatedDoc = await this.silent(() =>
-            this.getDocument(options.relatedCollection, value),
-          );
-
-          if (relatedDoc.empty() && !this.checkRelationshipsExist) {
-            throw new RelationshipException(
-              `Related document '${value}' not found`,
-            );
-          }
-
-          if (type === RelationEnum.OneToOne) {
-            if (options.side === RelationSideEnum.Child && !options.twoWay) {
-              throw new DatabaseException(
-                `Cannot update OneToOne from child side without twoWay`,
-              );
-            }
-
-            if (options.twoWay) {
-              // Clear previous relationship
-              await this.silent(() =>
-                this.skipCheckRelationshipsExist(() =>
-                  this.updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: null }),
-                    (qb) => qb.equal(options.twoWayKey!, document.getId()),
-                  ),
-                ),
-              );
-
-              // Set new relationship
-              if (value !== null && typeof value === "string") {
-                await this.silent(() =>
-                  this.skipCheckRelationshipsExist(() =>
-                    this.updateDocument(
-                      options.relatedCollection,
-                      value,
-                      new Doc({ [options.twoWayKey!]: document.getId() }),
-                    ),
-                  ),
-                );
-              }
-            }
-          }
-        } else if (
-          type === RelationEnum.ManyToMany ||
-          (type === RelationEnum.OneToMany &&
-            side === RelationSideEnum.Parent) ||
-          (type === RelationEnum.ManyToOne && side === RelationSideEnum.Child)
-        ) {
-          const { setIds, connectIds, disconnectIds } =
-            this.formatRelationValue(value);
-          // Remove the relationship attribute from the document to prevent errors during the main document update
-          document.delete(relationship.get("key"));
-
-          if (
-            setIds === undefined &&
-            connectIds.length === 0 &&
-            disconnectIds.length === 0
-          ) {
-            continue;
-          }
-
-          if (type === RelationEnum.ManyToMany) {
-            await this.handleManyToMany(
-              collection,
-              document,
-              relationship,
-              options,
-              setIds,
-              connectIds,
-              disconnectIds,
-            );
-          } else {
-            // If SET mode
-            if (setIds !== undefined) {
-              // Clear all current children
-              await this.silent(() =>
-                this.skipCheckRelationshipsExist(() =>
-                  this.updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: null }),
-                    (qb) => qb.equal(options.twoWayKey!, document.getId()),
-                  ),
-                ),
-              );
-
-              //  If new set is not empty, set new children
-              if (setIds && setIds.length > 0) {
-                await this.silent(() =>
-                  this.skipCheckRelationshipsExist(() =>
-                    this.updateDocuments(
-                      options.relatedCollection,
-                      new Doc({ [options.twoWayKey!]: document.getId() }),
-                      [Query.equal("$id", setIds)],
-                    ),
-                  ),
-                );
-              }
-            }
-            // Else CONNECT/DISCONNECT mode
-            else {
-              // Remove overlaps
-              const connectSet = new Set(connectIds);
-              const disconnectSet = new Set(disconnectIds);
-              for (const id of connectSet) disconnectSet.delete(id);
-
-              // Disconnect
-              if (disconnectSet.size > 0) {
-                await this.silent(() =>
-                  this.skipCheckRelationshipsExist(() =>
-                    this.updateDocuments(
-                      options.relatedCollection,
-                      new Doc({ [options.twoWayKey!]: null }),
-                      [Query.equal("$id", Array.from(disconnectSet))],
-                    ),
-                  ),
-                );
-              }
-
-              // Connect
-              if (connectSet.size > 0) {
-                await this.silent(() =>
-                  this.skipCheckRelationshipsExist(() =>
-                    this.updateDocuments(
-                      options.relatedCollection,
-                      new Doc({ [options.twoWayKey!]: document.getId() }),
-                      [Query.equal("$id", Array.from(connectSet))],
-                    ),
-                  ),
-                );
-              }
-            }
-          }
-        }
-      } finally {
-        this._relationStack.delete(loopKey);
-      }
-    }
-    return document;
+    return updateDocumentRelationships(this, collection, document);
   }
 
   /**
@@ -3278,25 +2256,7 @@ export class Database extends Cache {
     collection: Doc<Collection>,
     document: Doc<Record<string, any>>,
   ) {
-    const relationships = collection
-      .get("attributes", [])
-      .filter((attr) => attr.get("type") === AttributeEnum.Relationship);
-
-    for (const relationship of relationships) {
-      const options = relationship.get("options", {}) as RelationOptions;
-      const relatedCollectionId = options.relatedCollection;
-      if (!relatedCollectionId) continue;
-
-      const loopKey = `${collection.getId()}::${document.getId()}::${relationship.getId()}`;
-      if (this._relationStack.has(loopKey)) continue;
-      this._relationStack.add(loopKey);
-
-      try {
-        await this.handleOnDelete(collection, document, relationship, options);
-      } finally {
-        this._relationStack.delete(loopKey);
-      }
-    }
+    return deleteDocumentRelationships(this, collection, document);
   }
 
   /**
@@ -3310,134 +2270,7 @@ export class Database extends Cache {
     relationship: Doc<Attribute>,
     options: RelationOptions,
   ): Promise<void> {
-    const type = options.relationType;
-    const side = options.side;
-    const onDelete = options.onDelete;
-
-    let targetCollectionId: string | undefined;
-    let targetField: string | null = null;
-    let isManyToMany = false;
-
-    // Identify relation mapping
-    if (type === RelationEnum.ManyToMany) {
-      isManyToMany = true;
-    } else if (type === RelationEnum.OneToOne) {
-      if (side === RelationSideEnum.Parent) {
-        targetCollectionId = options.relatedCollection;
-        targetField = options.twoWayKey!;
-      } else {
-        targetCollectionId = collection.getId();
-        targetField = relationship.getId();
-      }
-    } else if (type === RelationEnum.OneToMany) {
-      if (side === RelationSideEnum.Parent) {
-        targetCollectionId = options.relatedCollection;
-        targetField = options.twoWayKey!;
-      } else {
-        targetCollectionId = collection.getId();
-        targetField = relationship.getId();
-      }
-    } else if (type === RelationEnum.ManyToOne) {
-      if (side === RelationSideEnum.Parent) {
-        targetCollectionId = collection.getId();
-        targetField = relationship.getId();
-      } else {
-        targetCollectionId = options.relatedCollection;
-        targetField = options.twoWayKey!;
-      }
-    }
-
-    if (isManyToMany) {
-      const relatedCollection = await this.getCollection(
-        options.relatedCollection,
-        true,
-      );
-      const parentColl =
-        side === RelationSideEnum.Parent ? collection : relatedCollection;
-      const childColl =
-        side === RelationSideEnum.Parent ? relatedCollection : collection;
-      const parentAttr =
-        side === RelationSideEnum.Parent
-          ? relationship.getId()
-          : options.twoWayKey!;
-      const childAttr =
-        side === RelationSideEnum.Parent
-          ? options.twoWayKey!
-          : relationship.getId();
-      const junctionCollection = this.getJunctionTable(
-        parentColl.getSequence(),
-        childColl.getSequence(),
-        parentAttr,
-        childAttr,
-      );
-
-      if (onDelete === OnDelete.Restrict) {
-        const count = await Authorization.skip(() =>
-          this.count(
-            junctionCollection,
-            [Query.equal(parentAttr, [document.getId()])],
-            1,
-          ),
-        );
-        if (count > 0) {
-          throw new RelationshipException(
-            `Cannot delete: related entries exist in "${relatedCollection.getId()}".`,
-          );
-        }
-      } else if (onDelete === OnDelete.SetNull) {
-        await Authorization.skip(() =>
-          this.deleteDocuments(junctionCollection, [
-            Query.equal(parentAttr, [document.getId()]),
-          ]),
-        );
-      } else if (onDelete === OnDelete.Cascade) {
-        const relatedIds = (
-          await this.find(junctionCollection, (qb) =>
-            qb.equal(parentAttr, document.getId()),
-          )
-        ).map((doc) => doc.get(childAttr));
-
-        await this.deleteDocuments(junctionCollection, [
-          Query.equal(parentAttr, [document.getId()]),
-        ]);
-
-        relatedIds.length &&
-          (await this.deleteDocuments(relatedCollection.getId(), (qb) =>
-            qb.equal("$id", ...relatedIds),
-          ));
-      }
-      return;
-    }
-
-    // Non-ManyToMany
-    if (!targetCollectionId || !targetField) return;
-
-    if (onDelete === OnDelete.Restrict) {
-      const count = await Authorization.skip(() =>
-        this.count(
-          targetCollectionId,
-          [Query.equal(targetField, [document.getId()])],
-          1,
-        ),
-      );
-      if (count > 0) {
-        throw new RelationshipException(
-          `Cannot delete: related entries exist in "${targetCollectionId}".`,
-        );
-      }
-    } else if (onDelete === OnDelete.SetNull) {
-      await Authorization.skip(() =>
-        this.updateDocuments(
-          targetCollectionId,
-          new Doc({ [targetField]: null }),
-          [Query.equal(targetField, [document.getId()])],
-        ),
-      );
-    } else if (onDelete === OnDelete.Cascade) {
-      await this.deleteDocuments(targetCollectionId, (qb) =>
-        qb.equal(targetField, document.getId()),
-      );
-    }
+    return handleOnDelete(this, collection, document, relationship, options);
   }
 
   /**
@@ -4120,12 +2953,21 @@ export class Database extends Cache {
       overrideValidators: [MethodType.Filter],
     });
 
-    const sum = await this.adapter.sum(
-      collection.getId(),
-      attribute,
-      processedQueries.filters,
-      max,
-    );
+    // Mirror find()/count(): a collection-level read grant sees every
+    // document, so the aggregate must skip the per-document `_perms` filter.
+    // Without this, sum() under-counts relative to find() for privileged
+    // callers on documentSecurity collections.
+    const authorization = new Authorization(PermissionEnum.Read);
+    const skipAuth = authorization.$valid(collection.getRead());
+
+    const getSum = () =>
+      this.adapter.sum(
+        collection.getId(),
+        attribute,
+        processedQueries.filters,
+        max,
+      );
+    const sum = skipAuth ? await Authorization.skip(getSum) : await getSum();
 
     this.trigger(EventsEnum.DocumentSum, sum);
 
@@ -4367,8 +3209,10 @@ export class Database extends Cache {
   }
 }
 
-export interface ProcessedQuery
-  extends Omit<QueryByType, "selections" | "populateQueries"> {
+export interface ProcessedQuery extends Omit<
+  QueryByType,
+  "selections" | "populateQueries"
+> {
   collection: Doc<Collection>;
   selections: string[];
   populateQueries?: PopulateQuery[];

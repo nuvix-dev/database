@@ -1,37 +1,34 @@
 {
   "name": "@nuvix/db",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "description": "Modular and performant open source database library for Nuvix, with internal complexity abstracted from developers.",
   "license": "BSD-3-Clause",
-  "main": "./dist/index.cjs",
+  "type": "module",
+  "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     }
   },
   "bin": {
     "nuvix-db": "dist/cli/generate-types.js"
   },
   "scripts": {
-    "build": "tsup",
-    "lint": "eslint . --ext .ts",
+    "build": "bun build ./src/index.ts --outdir dist --target bun && bun build ./src/cli/generate-types.ts --outdir dist/cli --target bun && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "rm -rf dist && npm run build && npm run typecheck",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "generate-types": "node dist/cli/generate-types.js",
-    "types:init": "node dist/cli/generate-types.js --init",
-    "types:watch": "node dist/cli/generate-types.js --watch",
-    "format": "prettier --write ."
+    "prepublishOnly": "rm -rf dist && bun run build && bun run typecheck",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "generate-types": "bun dist/cli/generate-types.js",
+    "types:init": "bun dist/cli/generate-types.js --init",
+    "types:watch": "bun dist/cli/generate-types.js --watch",
+    "lint": "bun lint",
+    "format": "bun format"
   },
-  "dependencies": {
-    "chalk": "^5.5.0"
-  },
+  "dependencies": {},
   "files": [
     "dist",
     "LICENSE",
@@ -44,17 +41,11 @@
   },
   "devDependencies": {
     "@nuvix/cache": "^1.0.3-alpha.1",
-    "@types/node": "^24.1.0",
-    "@types/pg": "^8.15.5",
-    "pg": "^8.16.3",
-    "prettier": "^3.6.2",
-    "tsup": "^8.5.0",
-    "typescript": "^5.8.3",
-    "vite-tsconfig-paths": "^5.1.2",
-    "vitest": "^2.0.5"
+    "@types/bun": "^1.4.0",
+    "typescript": "^5.8.3"
   },
   "engines": {
-    "node": ">=18.17"
+    "bun": ">=1.4.0"
   },
   "keywords": [
     "nuvix",
@@ -63,8 +54,8 @@
     "orm",
     "query-builder",
     "postgresql",
+    "bun",
     "modular",
-    "validation",
-    "pino"
+    "validation"
   ]
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createTestDb } from "./helpers.js";
 import { Doc } from "@core/doc.js";
 import { AttributeEnum, IndexEnum } from "@core/enums.js";

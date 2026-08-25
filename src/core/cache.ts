@@ -1,4 +1,4 @@
-import { Cache as NuvixCache } from "@nuvix/cache";
+import type { CacheDriver } from "@cache/types.js";
 import { Base } from "./base.js";
 import { Collection } from "@validators/schema.js";
 import { Doc } from "./doc.js";
@@ -8,7 +8,7 @@ import { fnv1a128 } from "@utils/index.js";
 export class Cache extends Base {
   protected cacheName: string = "default";
 
-  public getCache(): NuvixCache {
+  public getCache(): CacheDriver {
     return this.cache;
   }
 
@@ -66,15 +66,19 @@ export class Cache extends Base {
   }
 
   private hashFilters(query: ProcessedQuery): string {
-    // const payload = {
-    //   selections: query.selections,
-    //   filters: query.filters ?? [],
-    //   limit: query.limit ?? null,
-    //   offset: query.offset ?? null,
-    //   cursor: query.cursor ? query.cursor?.getId() : null,
-    //   cursorDirection: query.cursorDirection ?? null,
-    // };
-    const selections = [...query.selections].sort();
-    return fnv1a128(JSON.stringify(selections));
+    // Hash the full query shape. Hashing only selections would let distinct
+    // queries (different filters/limit/cursor) collide on one cached document.
+    const payload = {
+      selections: [...query.selections].sort(),
+      filters: (query.filters ?? []).map((q) => q.toObject()),
+      limit: query.limit ?? null,
+      offset: query.offset ?? null,
+      cursor:
+        query.cursor instanceof Doc
+          ? query.cursor.getId()
+          : (query.cursor ?? null),
+      cursorDirection: query.cursorDirection ?? null,
+    };
+    return fnv1a128(JSON.stringify(payload));
   }
 }

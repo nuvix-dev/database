@@ -6,19 +6,55 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    # TODO: remove continue-on-error once the 9 pre-existing test failures
+    # (6x Doc.toObject, 2x generateTypes, 1x json filter) are fixed — this
+    # job then becomes a hard gate for publish.
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:17-alpine
+        # Mirrors docker-compose.yml: bun:test accumulates one SQL pool per
+        # test file before cleanup hooks run.
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nuvix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun test
+        env:
+          PG_URL: postgres://postgres:postgres@localhost:5432/nuvix_test
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     environment: production
 
     steps:
       - uses: actions/checkout@v4
 
-      # Setup Node.js environment
-      - name: Use Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20.x"
-          registry-url: "https://registry.npmjs.org"
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v2
 
       # Determine release tag based on the tag name
       - name: Determine release tag
@@ -30,14 +66,14 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      # Install dependencies (if any) and build your project (if necessary)
       - name: Install dependencies and build
         run: |
-          npm install
-          npm run build
+          bun install --frozen-lockfile
+          bun run build
 
-      # Publish to NPM with the appropriate tag
+      # Publish to NPM with the appropriate tag.
+      # bun publish reads NPM_CONFIG_TOKEN in CI environments.
       - name: Publish
-        run: npm publish --tag ${{ steps.release_tag.outputs.tag }} --access public
+        run: bun publish --tag ${{ steps.release_tag.outputs.tag }} --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}

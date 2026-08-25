@@ -7,7 +7,7 @@ import {
   RelationEnum,
   RelationSideEnum,
 } from "./enums.js";
-import { Cache } from "@nuvix/cache";
+import type { CacheDriver } from "@cache/types.js";
 import { Filter, Filters } from "./types.js";
 import { Meta } from "@adapters/base.js";
 import { filters } from "@utils/filters.js";
@@ -16,12 +16,16 @@ import {
   DatabaseException,
   DuplicateException,
   NotFoundException,
-  RelationshipException,
 } from "@errors/index.js";
 import { Structure } from "@validators/structure.js";
 import { Adapter } from "@adapters/adapter.js";
 import { PopulateQuery, ProcessedQuery } from "./database.js";
 import { Logger, LoggerOptions } from "@utils/logger.js";
+import {
+  formatRelationValue,
+  getRequiredFilters,
+  validateDefaultTypes,
+} from "./validation-utils.js";
 
 export abstract class Base<
   T extends EmitterEventMap = EmitterEventMap,
@@ -158,7 +162,7 @@ export abstract class Base<
   ];
 
   protected readonly adapter: Adapter;
-  protected readonly cache: Cache;
+  protected readonly cache: CacheDriver;
 
   protected static filters: Filters = {};
   protected readonly instanceFilters: Filters;
@@ -175,9 +179,15 @@ export abstract class Base<
   protected _collectionEnabledValidate: boolean = false;
   protected attachSchemaInDocument: boolean = true;
 
+  /**
+   * Per-collection prepared attribute list for decode(). Keyed by collection
+   * Doc identity so it invalidates automatically when metadata is re-fetched.
+   */
+  private decodeAttributesCache = new WeakMap<Doc<Collection>, any[]>();
+
   protected readonly logger: Logger;
 
-  constructor(adapter: Adapter, cache: Cache, options: Options = {}) {
+  constructor(adapter: Adapter, cache: CacheDriver, options: Options = {}) {
     super();
     this.adapter = adapter;
     this.cache = cache;
@@ -624,76 +634,11 @@ export abstract class Base<
   }
 
   protected validateDefaultTypes(type: AttributeEnum, value: unknown): void {
-    if (value === null || value === undefined) {
-      // Disable null. No validation required
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      for (const v of value) {
-        this.validateDefaultTypes(type, v);
-      }
-      return;
-    }
-
-    const valueType = typeof value;
-
-    switch (type) {
-      case AttributeEnum.Json:
-        if (valueType !== "object") {
-          throw new DatabaseException(
-            `Default value ${value} does not match given type ${type}`,
-          );
-        }
-        break;
-      case AttributeEnum.Uuid:
-      case AttributeEnum.String:
-        if (valueType !== "string") {
-          throw new DatabaseException(
-            `Default value ${value} does not match given type ${type}`,
-          );
-        }
-        break;
-      case AttributeEnum.Integer:
-        if (valueType !== "number" || !Number.isInteger(value)) {
-          throw new DatabaseException(
-            `Default value ${value} does not match given type ${type}`,
-          );
-        }
-        break;
-      case AttributeEnum.Float:
-        if (valueType !== "number") {
-          throw new DatabaseException(
-            `Default value ${value} does not match given type ${type}`,
-          );
-        }
-        break;
-      case AttributeEnum.Boolean:
-        if (valueType !== "boolean") {
-          throw new DatabaseException(
-            `Default value ${value} does not match given type ${type}`,
-          );
-        }
-        break;
-      case AttributeEnum.Timestamptz:
-        if (valueType !== "string") {
-          throw new DatabaseException(
-            `Default value ${value} does not match given type ${type}`,
-          );
-        }
-        break;
-      default:
-        throw new DatabaseException(
-          `Unknown attribute type: ${type}. Must be one of ${Object.values(AttributeEnum)}`,
-        );
-    }
+    validateDefaultTypes(type, value);
   }
 
   protected getRequiredFilters(type: AttributeEnum): string[] {
-    switch (type) {
-      default:
-        return [];
-    }
+    return getRequiredFilters(type);
   }
 
   protected assertCollectionEnabled(collection: Doc<Collection>): boolean {
@@ -721,11 +666,11 @@ export abstract class Base<
       return document;
     }
 
-    const attributes: (Attribute | Doc<Attribute>)[] =
-      collection.get("attributes") ?? [];
-    for (const attribute of Base.INTERNAL_ATTRIBUTES) {
-      attributes.push(attribute);
-    }
+    // Build a fresh array — never mutate the collection's own attribute list.
+    const attributes: (Attribute | Doc<Attribute>)[] = [
+      ...(collection.get("attributes") ?? []),
+      ...Base.INTERNAL_ATTRIBUTES,
+    ];
 
     for (const attr of attributes) {
       const attribute = attr instanceof Doc ? attr.toObject() : attr;
@@ -861,11 +806,17 @@ export abstract class Base<
     }: Pick<ProcessedQuery | PopulateQuery, "collection" | "populateQueries">,
     document: Doc<Record<string, any>>,
   ): Promise<Doc<T>> {
-    const internalAttributes = this.getInternalAttributes();
-    const attributes = [
-      ...(collection.get("attributes") ?? []),
-      ...internalAttributes,
-    ].map((attr) => (attr instanceof Doc ? attr.toObject() : attr));
+    // Prepared attributes are cached per collection instance; the WeakMap
+    // key invalidates automatically when collection metadata is re-fetched.
+    let attributes = this.decodeAttributesCache.get(collection);
+    if (!attributes) {
+      const internalAttributes = this.getInternalAttributes();
+      attributes = [
+        ...(collection.get("attributes") ?? []),
+        ...internalAttributes,
+      ].map((attr) => (attr instanceof Doc ? attr.toObject() : attr));
+      this.decodeAttributesCache.set(collection, attributes);
+    }
 
     for (const attribute of attributes) {
       if (attribute.type !== AttributeEnum.Relationship || !attribute.$id)
@@ -991,9 +942,8 @@ export abstract class Base<
     value: any,
     document: Doc,
   ): Promise<any> {
-    const allFilters = this.getFilters();
-
-    if (!allFilters[filter]) {
+    // Existence check without allocating a merged filters object.
+    if (!this.instanceFilters[filter] && !Base.filters[filter]) {
       throw new NotFoundException(`Filter: ${filter} not found`);
     }
 
@@ -1029,8 +979,8 @@ export abstract class Base<
       return value;
     }
 
-    const allFilters = this.getFilters();
-    if (!allFilters[filter]) {
+    // Existence check without allocating a merged filters object.
+    if (!this.instanceFilters[filter] && !Base.filters[filter]) {
       throw new NotFoundException(
         `Filter "${filter}" not found for attribute "${attribute}"`,
       );
@@ -1290,93 +1240,7 @@ export abstract class Base<
     connectIds: string[];
     disconnectIds: string[];
   } {
-    let setIds: string[] | null | undefined = undefined;
-    const connectIdsSet = new Set<string>();
-    const disconnectIdsSet = new Set<string>();
-
-    if (typeof value !== "object" && value !== null) {
-      throw new RelationshipException(
-        "Invalid value for relationship: must be an object or null",
-      );
-    }
-
-    if (value === null) {
-      // Null means "clear all relationships"
-      setIds = null;
-    } else {
-      if ("connect" in value) {
-        const connectValues = value.connect;
-        if (connectValues !== undefined) {
-          if (!Array.isArray(connectValues)) {
-            throw new RelationshipException(
-              "Connect must be an array of string IDs",
-            );
-          }
-          for (const id of connectValues) {
-            if (typeof id !== "string") {
-              throw new RelationshipException("Ids in connect must be strings");
-            }
-            connectIdsSet.add(id);
-          }
-        }
-      }
-
-      if ("disconnect" in value) {
-        const disconnectValues = value.disconnect;
-        if (disconnectValues !== undefined) {
-          if (!Array.isArray(disconnectValues)) {
-            throw new RelationshipException(
-              "Disconnect must be an array of string IDs",
-            );
-          }
-          for (const id of disconnectValues) {
-            if (typeof id !== "string") {
-              throw new RelationshipException(
-                "Ids in disconnect must be strings",
-              );
-            }
-            disconnectIdsSet.add(id);
-          }
-        }
-      }
-
-      if ("set" in value) {
-        const setValues = value.set;
-        if (setValues === null) {
-          setIds = null; // Explicit null = clear all
-        } else if (setValues !== undefined) {
-          if (!Array.isArray(setValues)) {
-            throw new RelationshipException(
-              "Set must be an array of string IDs or null",
-            );
-          }
-          setIds = Array.from(
-            new Set(
-              setValues.map((id) => {
-                if (typeof id !== "string") {
-                  throw new RelationshipException("Ids in set must be strings");
-                }
-                return id;
-              }),
-            ),
-          );
-        }
-      }
-    }
-
-    const connectIds = Array.from(connectIdsSet);
-    const disconnectIds = Array.from(disconnectIdsSet);
-
-    if (
-      setIds !== undefined &&
-      (connectIds.length > 0 || disconnectIds.length > 0)
-    ) {
-      throw new RelationshipException(
-        "Cannot use set with connect or disconnect at the same time.",
-      );
-    }
-
-    return { setIds, connectIds, disconnectIds };
+    return formatRelationValue(value);
   }
 }
 

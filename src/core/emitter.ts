@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { EventEmitter } from "node:events";
 import { EventsEnum } from "./enums.js";
 import { Logger } from "@utils/logger.js";
 import { Doc } from "./doc.js";
@@ -134,17 +134,19 @@ export interface IEmitter<EventsMap extends EmitterEventMap> {
  * allowing us to enforce our custom public API.
  */
 type BaseEventEmitterFiltered = {
-  [P in Exclude<
-    keyof EventEmitter,
-    | "on"
-    | "addListener"
-    | "removeListener"
-    | "off"
-    | "once"
-    | "prependListener"
-    | "prependOnceListener"
-    | "removeAllListeners"
-  >]: EventEmitter[P];
+  [
+    P in Exclude<
+      keyof EventEmitter,
+      | "on"
+      | "addListener"
+      | "removeListener"
+      | "off"
+      | "once"
+      | "prependListener"
+      | "prependOnceListener"
+      | "removeAllListeners"
+    >
+  ]: EventEmitter[P];
 };
 
 /**

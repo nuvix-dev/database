@@ -1,5 +1,6 @@
-import { existsSync } from "fs";
-import { resolve } from "path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { createRequire } from "node:module";
 import { NuvixDBConfig, DEFAULT_CONFIG, CLIOptions } from "./types.js";
 
 export class ConfigLoader {
@@ -54,8 +55,10 @@ export class ConfigLoader {
       const module = await import(`file://${absolutePath}`);
       return module.default || module;
     } catch (error) {
-      // Fallback for CommonJS
+      // Fallback for CommonJS configs — bare require() is illegal in ESM
+      // ("type": "module"), so route through createRequire.
       try {
+        const require = createRequire(import.meta.url);
         const module = require(absolutePath);
         return module.default || module;
       } catch (requireError) {

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "vitest";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
 import { Doc, DocException, IEntity } from "index.js";
@@ -92,7 +92,7 @@ describe("Doc Class", () => {
       });
 
       expect(doc.get("nullValue")).toBe(null);
-      expect(doc.get("undefinedValue")).toBe(null);
+      expect(doc.get("undefinedValue") as unknown).toBe(null);
     });
   });
 
@@ -169,9 +169,9 @@ describe("Doc Class", () => {
       doc.set("age", 30);
       doc.set("active", true);
 
-      expect(doc.get("name")).toBe("New Name");
-      expect(doc.get("age")).toBe(30);
-      expect(doc.get("active")).toBe(true);
+      expect(doc.get("name") as unknown).toBe("New Name");
+      expect(doc.get("age") as unknown).toBe(30);
+      expect(doc.get("active") as unknown).toBe(true);
     });
 
     test("should transform entity-like objects into Doc", () => {
@@ -186,7 +186,7 @@ describe("Doc Class", () => {
       const existingDoc = new Doc({ $id: "existing" });
       doc.set("reference", existingDoc);
 
-      expect(doc.get("reference")).toBe(existingDoc);
+      expect(doc.get("reference") as unknown).toBe(existingDoc);
     });
 
     test("should transform arrays with entity-like objects", () => {
@@ -199,8 +199,8 @@ describe("Doc Class", () => {
 
       const items = doc.get("items");
       expect(items?.[0]).toBeInstanceOf(Doc);
-      expect(items?.[1]).toBe("string");
-      expect(items?.[2]).toBe(123);
+      expect(items?.[1] as unknown).toBe("string");
+      expect(items?.[2] as unknown).toBe(123);
       expect(items?.[3]).toBeInstanceOf(Doc);
     });
 
@@ -208,13 +208,13 @@ describe("Doc Class", () => {
       doc.set("nullField", null);
       doc.set("undefinedField", undefined);
 
-      expect(doc.get("nullField")).toBe(null);
-      expect(doc.get("undefinedField")).toBe(null);
+      expect(doc.get("nullField") as unknown).toBe(null);
+      expect(doc.get("undefinedField") as unknown).toBe(null);
     });
 
     test("should return this for method chaining", () => {
       const result = doc.set("name", "Test");
-      expect(result).toBe(doc);
+      expect(result as unknown).toBe(doc);
     });
   });
 
@@ -593,7 +593,7 @@ describe("Doc Class", () => {
         });
 
         const found = doc.findWhere("items", (item: any) => item.id === 999);
-        expect(found).toBe(null);
+        expect(found as unknown).toBe(null);
       });
 
       test("should check single value against predicate", () => {
@@ -755,7 +755,7 @@ describe("Doc Class", () => {
         });
 
         const obj = doc.toObject(["$id", "name"]);
-        expect(obj).toEqual({
+        expect(obj as unknown).toEqual({
           $id: "test",
           name: "Test",
         });
@@ -770,7 +770,7 @@ describe("Doc Class", () => {
         });
 
         const obj = doc.toObject([], ["age", "email"]);
-        expect(obj).toEqual({
+        expect(obj as unknown).toEqual({
           $id: "test",
           name: "Test",
         });
@@ -785,7 +785,7 @@ describe("Doc Class", () => {
         });
 
         const obj = doc.toObject(["$id", "name", "age"], ["age"]);
-        expect(obj).toEqual({
+        expect(obj as unknown).toEqual({
           $id: "test",
           name: "Test",
         });
@@ -934,8 +934,8 @@ describe("Doc Class", () => {
       doc2.set("reference", doc1);
 
       // Should not throw or cause infinite loop
-      expect(doc1.get("reference")).toBe(doc2);
-      expect(doc2.get("reference")).toBe(doc1);
+      expect(doc1.get("reference") as unknown).toBe(doc2);
+      expect(doc2.get("reference") as unknown).toBe(doc1);
     });
   });
 
@@ -957,7 +957,7 @@ describe("Doc Class", () => {
         .update("age" as unknown as any, 30);
 
       expect(doc.get("name")).toBe("Updated");
-      expect(doc.get("age")).toBe(30);
+      expect(doc.get("age") as unknown).toBe(30);
     });
 
     test("should support chaining array operations", () => {

@@ -1,14 +1,14 @@
-import fs from "fs";
-import path from "path";
-import chalk from "chalk";
+import fs from "node:fs";
+import path from "node:path";
+import { colors } from "./colors.js";
 
 type LogLevel = "error" | "warn" | "info" | "debug";
 
-const LEVEL_COLORS: Record<LogLevel, typeof chalk> = {
-  error: chalk.red,
-  warn: chalk.yellow,
-  info: chalk.green,
-  debug: chalk.blue,
+const LEVEL_COLORS: Record<LogLevel, (text: string) => string> = {
+  error: colors.red,
+  warn: colors.yellow,
+  info: colors.green,
+  debug: colors.blue,
 };
 
 export interface LoggerOptions {
@@ -30,10 +30,10 @@ export class Logger {
   private logFilePath?: string;
   private maxFileSize: number;
 
-  private writeStream?: fs.WriteStream;
-  private logBuffer: string[] = [];
+  private sink?: Bun.FileSink;
   private flushIntervalMs = 100;
-  private flushTimer?: NodeJS.Timeout;
+  private flushTimer?: ReturnType<typeof setInterval>;
+  private rotating = false;
 
   private serializers = new Map<Function, Serializer>();
 
@@ -62,11 +62,16 @@ export class Logger {
       if (!fs.existsSync(path.dirname(this.logFilePath!))) {
         fs.mkdirSync(path.dirname(this.logFilePath!), { recursive: true });
       }
-      this.writeStream = fs.createWriteStream(this.logFilePath!, {
-        flags: "a",
-      });
+      // Native FileSink — buffered in Zig, flushed on highWaterMark or
+      // explicitly via flush(). Replaces fs.WriteStream.
+      // NOTE: `append` is valid at runtime but missing from @types/bun 1.x
+      // typings (which only declare highWaterMark), hence the cast.
+      const writerOptions = { append: true } as unknown as {
+        highWaterMark?: number;
+      };
+      this.sink = Bun.file(this.logFilePath!).writer(writerOptions);
       this.flushTimer = setInterval(
-        () => this.flushBuffer(),
+        () => void this.flushSink(),
         this.flushIntervalMs,
       );
     } catch (err) {
@@ -74,29 +79,38 @@ export class Logger {
     }
   }
 
-  private rotateFileIfNeeded() {
-    if (!this.writeStream || !this.logFilePath) return;
+  private async rotateFileIfNeeded() {
+    if (!this.sink || !this.logFilePath || this.rotating) return;
     try {
       const stats = fs.statSync(this.logFilePath);
       if (stats.size >= this.maxFileSize) {
-        this.writeStream.close();
+        this.rotating = true;
+        const staleSink = this.sink;
+        this.sink = undefined;
+        await staleSink.end();
         const rotatedPath =
           this.logFilePath +
           "." +
           new Date().toISOString().replace(/[:.]/g, "-");
         fs.renameSync(this.logFilePath, rotatedPath);
         this.initWriteStream();
+        this.rotating = false;
       }
     } catch {
+      this.rotating = false;
       // Ignore stat errors (e.g., file not found)
     }
   }
 
-  private flushBuffer() {
-    if (!this.writeStream || this.logBuffer.length === 0) return;
-    const data = this.logBuffer.join("\n") + "\n";
-    this.writeStream.write(data);
-    this.logBuffer.length = 0;
+  /**
+   * Periodic maintenance: rotate if the file grew past maxFileSize, then
+   * flush the native sink. Runs on the flush timer instead of per log line,
+   * so statSync no longer sits on the hot path.
+   */
+  private async flushSink() {
+    if (!this.sink) return;
+    await this.rotateFileIfNeeded();
+    this.sink?.flush();
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -127,11 +141,11 @@ export class Logger {
   }
 
   private formatMessage(level: LogLevel, message: string, ...args: any[]) {
-    const color = LEVEL_COLORS[level] || chalk.white;
+    const color = LEVEL_COLORS[level] || colors.white;
     const timeStr = this.timestamp
-      ? chalk.gray(new Date().toISOString()) + " "
+      ? colors.gray(new Date().toISOString()) + " "
       : "";
-    const contextStr = this.context ? chalk.magenta(`[${this.context}] `) : "";
+    const contextStr = this.context ? colors.magenta(`[${this.context}] `) : "";
     const levelStr = color(level.toUpperCase().padEnd(5));
     const formattedArgs = args.length
       ? " " + args.map((a) => this.serializeArg(a)).join(" ")
@@ -151,14 +165,11 @@ export class Logger {
       console.log(output);
     }
 
-    // File output (no color codes)
-    if (this.writeStream) {
+    // File output (no color codes). FileSink buffers natively — no
+    // application-level buffering needed.
+    if (this.sink) {
       const plainText = output.replace(/\x1b\[[0-9;]*m/g, "");
-      this.logBuffer.push(plainText);
-      if (this.logBuffer.length > 1000) {
-        this.flushBuffer();
-      }
-      this.rotateFileIfNeeded();
+      this.sink.write(plainText + "\n");
     }
   }
 
@@ -185,9 +196,15 @@ export class Logger {
       clearInterval(this.flushTimer);
       this.flushTimer = undefined;
     }
-    this.flushBuffer();
-    if (this.writeStream) {
-      await new Promise<void>((resolve) => this.writeStream!.end(resolve));
+    if (this.sink) {
+      const sink = this.sink;
+      this.sink = undefined;
+      try {
+        sink.flush();
+        await sink.end();
+      } catch {
+        // Ignore errors during shutdown
+      }
     }
   }
 

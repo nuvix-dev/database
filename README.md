@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@nuvix/db.svg)](https://www.npmjs.com/package/@nuvix/db)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-Proprietary_License-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/workflow/status/Nuvix-Tech/database/CI)](https://github.com/Nuvix-Tech/database/actions)
 
 A modular and performant database library for Nuvix, with internal complexity abstracted from developers. Built with TypeScript, this library provides a high-level interface for PostgreSQL databases with support for relationships, validation, caching, and more.
@@ -44,10 +44,8 @@ import {
 } from "@nuvix/db";
 import { Memory } from "@nuvix/cache";
 
-// Create database adapter
-const adapter = new Adapter({
-  connectionString: "postgres://user:pass@localhost:5432/mydb",
-});
+// Create database adapter (Bun-native PostgreSQL driver)
+const adapter = new Adapter("postgres://user:pass@localhost:5432/mydb");
 
 // Initialize database
 const db = new Database(adapter, new Memory());
@@ -369,9 +367,9 @@ src/
 
 ### Prerequisites
 
-- Node.js 18.17 or later
+- [Bun](https://bun.sh) 1.4 or later (required — the library is built on Bun-native APIs)
 - PostgreSQL 12 or later
-- Bun (recommended) or npm/yarn
+- Docker (optional, for local test services via `docker compose up -d`)
 
 ### Setup
 
@@ -424,23 +422,24 @@ PG_URL=postgres://postgres:postgres@localhost:5432/test_db
 
 ### Database Adapter Options
 
+The adapter is powered by Bun's native SQL client. Pass a connection string,
+a Bun `SQL` instance, or an options object:
+
 ```typescript
-const adapter = new Adapter({
-  // PostgreSQL connection config
-  host: "localhost",
-  port: 5432,
-  database: "myapp",
-  user: "username",
-  password: "password",
+import { Adapter } from "@nuvix/db";
+import { SQL } from "bun";
 
-  // Or use connection string
-  connectionString: "postgres://user:pass@host:port/db",
+// Connection string (recommended)
+const adapter = new Adapter("postgres://user:pass@localhost:5432/myapp");
 
-  // Connection pool settings
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+// Or a pre-configured Bun SQL instance for pool tuning
+const adapter = new Adapter(
+  new SQL("postgres://user:pass@localhost:5432/myapp", {
+    max: 20, // maximum pool connections
+    idleTimeout: 30, // seconds
+    connectionTimeout: 30, // seconds
+  }),
+);
 
 // Set metadata for multi-tenancy
 adapter.setMeta({
@@ -455,18 +454,45 @@ adapter.setMeta({
 
 ### Cache Configuration
 
+`@nuvix/db` depends on a minimal `CacheDriver` interface — four async
+operations (`get`, `set`, `flushByTags`, `flush`). Any object satisfying it
+works, including `Memory` and `Redis` from [`@nuvix/cache`](https://www.npmjs.com/package/@nuvix/cache),
+which implement the interface structurally:
+
 ```typescript
 import { Memory, Redis } from "@nuvix/cache";
 
 // In-memory cache (development)
-const cache = new Memory();
+const db = new Database(adapter, new Memory());
 
 // Redis cache (production)
-const cache = new Redis({
-  host: "localhost",
-  port: 6379,
-  password: "redis-password",
-});
+const db = new Database(
+  adapter,
+  new Redis({ host: "localhost", port: 6379, password: "redis-password" }),
+);
+```
+
+Or bring your own driver:
+
+```typescript
+import type { CacheDriver } from "@nuvix/db";
+
+const myCache: CacheDriver = {
+  async get(key) {
+    /* return cached value or null */
+  },
+  async set(key, value, options) {
+    /* options: { ttl?, tags? } */
+  },
+  async flushByTags(tags) {
+    /* invalidate entries by tag */
+  },
+  async flush() {
+    /* clear everything */
+  },
+};
+
+const db = new Database(adapter, myCache);
 ```
 
 ## API Reference
@@ -533,10 +559,10 @@ We welcome contributions! Please follow these guidelines:
 
 ### Testing
 
-All contributions must include tests. We use Vitest for testing:
+All contributions must include tests. We use Bun's built-in test runner:
 
 ```typescript
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createTestDb } from "./helpers.js";
 
 describe("Feature", () => {
@@ -557,9 +583,13 @@ describe("Feature", () => {
 });
 ```
 
+Tests require a running PostgreSQL instance — start one with
+`docker compose up -d` and set `PG_URL` (see
+[Environment Variables](#environment-variables)).
+
 ## License
 
-This project is licensed under the Proprietary License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 

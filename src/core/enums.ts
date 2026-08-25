@@ -7,7 +7,6 @@ export enum AttributeEnum {
   Json = "jsonb",
   Relationship = "relationship",
   Virtual = "virtual",
-  /**@deprecated Not Implemented */
   Uuid = "uuid",
 }
 

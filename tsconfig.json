@@ -21,7 +21,9 @@
     "outDir": "./dist",
     "baseUrl": "./src",
     "paths": {
+      "@nuvix/db": ["index.ts"],
       "@core/*": ["core/*"],
+      "@cache/*": ["cache/*"],
       "@adapters/*": ["adapters/*"],
       "@utils/*": ["utils/*"],
       "@validators/*": ["validators/*"],

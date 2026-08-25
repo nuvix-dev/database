@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "@core/database.js";
 import { createTestDb } from "../helpers.js";
 import { Doc } from "@core/doc.js";
@@ -113,10 +113,10 @@ describe("Document Operations", () => {
       expect(document.get("name")).toBe("John Doe");
       expect(document.get("age")).toBe(30);
       expect(document.get("email")).toBe("john@example.com");
-      expect(document.get("$collection")).toBe(testCollectionId);
+      expect(document.get("$collection") as unknown).toBe(testCollectionId);
       expect(document.get("$createdAt")).toBeDefined();
       expect(document.get("$updatedAt")).toBeDefined();
-      expect(document.get("version")).toBe("v1");
+      expect(document.get("version") as unknown).toBe("v1");
     });
 
     test("should create document with default values", async () => {
@@ -130,8 +130,8 @@ describe("Document Operations", () => {
       );
 
       expect(document.get("name")).toBe("Jane Doe");
-      expect(document.get("age")).toBe(0); // default value
-      expect(document.get("active")).toBe(true); // default value
+      expect(document.get("age") as unknown).toBe(0); // default value
+      expect(document.get("active") as unknown).toBe(true); // default value
     });
 
     test("should create document with array attributes", async () => {
@@ -653,7 +653,7 @@ describe("Document Operations", () => {
 
       expect(document.get("name")).toBe("Null Test");
       expect(document.get("email")).toBeNull();
-      expect(document.get("age")).toBe(0); // default value applied
+      expect(document.get("age") as unknown).toBe(0); // default value applied
     });
 
     test("should handle large documents", async () => {

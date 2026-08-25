@@ -7,15 +7,15 @@ export * from "./permission.js";
 export * from "./query-builder.js";
 export * from "./role.js";
 
+/**
+ * Computes a 128-bit hash of a string, returned as a fixed 32-char hex string.
+ *
+ * Backed by Bun's native `CryptoHasher` (MD5). This is NOT cryptographic —
+ * it is used for non-security purposes such as cache-key fingerprints,
+ * where speed matters and collision resistance of MD5 is more than
+ * sufficient. Replaces the previous pure-JS FNV-1a implementation, which
+ * allocated BigInts per character on hot paths.
+ */
 export function fnv1a128(str: string): string {
-  let hash = BigInt("0x6c62272e07bb014262b821756295c58d"); // 128-bit offset basis
-  const prime = BigInt("0x0000000001000000000000000000013B"); // 128-bit prime
-
-  for (let i = 0; i < str.length; i++) {
-    hash ^= BigInt(str.charCodeAt(i));
-    hash = (hash * prime) & ((BigInt(1) << BigInt(128)) - BigInt(1)); // 128-bit overflow
-  }
-
-  // Return as fixed 32-char hex string
-  return hash.toString(16).padStart(32, "0");
+  return new Bun.CryptoHasher("md5").update(str).digest("hex");
 }

@@ -10,6 +10,7 @@ import {
   OrderEnum,
 } from "@core/enums.js";
 import { IncreaseDocumentAttribute } from "./types.js";
+import { processException } from "./error-mapper.js";
 import { Doc } from "@core/doc.js";
 import { Database, PopulateQuery, ProcessedQuery } from "@core/database.js";
 import { QueryBuilder } from "@utils/query-builder.js";
@@ -18,16 +19,9 @@ import { Entities, IEntity } from "types.js";
 import { Logger } from "@utils/logger.js";
 import { Authorization } from "@utils/authorization.js";
 import { Collection, RelationOptions } from "@validators/schema.js";
-import { DatabaseError } from "pg";
-import {
-  DuplicateException,
-  NotFoundException,
-  OrderException,
-  TimeoutException,
-  TruncateException,
-} from "@errors/index.js";
-import { createHash } from "crypto";
-import { EventEmitter } from "events";
+import type { DatabaseError } from "./postgres.js";
+import { OrderException } from "@errors/index.js";
+import { EventEmitter } from "node:events";
 import type { PostgresClient, Transaction } from "./postgres.js";
 
 export abstract class BaseAdapter extends EventEmitter {
@@ -80,7 +74,7 @@ export abstract class BaseAdapter extends EventEmitter {
   }
 
   public get $database(): string {
-    const database = this.client.getPool().options.database;
+    const database = this.client.database;
     if (!database)
       throw new DatabaseException(
         "Database name is not defined in client metadata.",
@@ -388,7 +382,7 @@ export abstract class BaseAdapter extends EventEmitter {
       sql += ` AND ${attr} <= ?`;
       params.push(max);
     }
-    if (min !== undefined && max !== null) {
+    if (min !== undefined && min !== null) {
       sql += ` AND ${attr} >= ?`;
       params.push(min);
     }
@@ -467,7 +461,10 @@ export abstract class BaseAdapter extends EventEmitter {
     try {
       const { rows } = await this.client.query<any>(sql, params);
       const result = rows[0];
-      return result?.sum ?? 0;
+      // COUNT returns bigint, which drivers surface as a string — coerce.
+      return result?.sum !== undefined && result?.sum !== null
+        ? Number(result.sum)
+        : 0;
     } catch (error) {
       throw this.processException(error, "Failed to count documents");
     }
@@ -538,7 +535,10 @@ export abstract class BaseAdapter extends EventEmitter {
     try {
       const { rows } = await this.client.query<any>(sql, params);
       const result = rows[0];
-      return result?.sum ?? 0;
+      // SUM of numerics may surface as a string depending on driver parsing.
+      return result?.sum !== undefined && result?.sum !== null
+        ? Number(result.sum)
+        : 0;
     } catch (error) {
       throw this.processException(error, "Failed to sum documents");
     }
@@ -852,51 +852,7 @@ export abstract class BaseAdapter extends EventEmitter {
     error: DatabaseError | unknown,
     message?: string,
   ): never {
-    const e = error as DatabaseError;
-
-    if (!(e instanceof DatabaseError)) {
-      if ((e as any) instanceof DatabaseException) {
-        throw e;
-      }
-      throw new DatabaseException(
-        (e as { message?: string })?.message ??
-          message ??
-          "Unexpected database error",
-        e,
-      );
-    }
-
-    switch (e.code) {
-      case "57014": // Query canceled / timeout
-        throw new TimeoutException("Query execution timed out", e.code, e);
-
-      case "42P07": // Duplicate table
-        throw new DuplicateException("Collection already exists", e.code, e);
-
-      case "42701": // Duplicate column
-        throw new DuplicateException("Column already exists", e.code, e);
-
-      case "23505": // Unique constraint violation (duplicate row)
-        throw new DuplicateException(
-          "Unique constraint violation: duplicate row",
-          e.code,
-          e,
-        );
-
-      case "22001": // String data right truncation
-        throw new TruncateException(
-          "Value too long: data would be truncated",
-          e.code,
-          e,
-        );
-
-      case "42703": // Undefined column
-        throw new NotFoundException("Referenced column not found", e.code, e);
-
-      default:
-        // For unmapped codes, rethrow to avoid masking potential issues
-        throw e;
-    }
+    return processException(error, message);
   }
 
   readonly $supportForTimeouts = true;
@@ -968,7 +924,11 @@ export abstract class BaseAdapter extends EventEmitter {
 
   protected getSQLIndex(table: string, name: string): string {
     const base = `${this.$schema}_${this._meta.namespace}_${table}_${name}`;
-    const safeId = createHash("sha1").update(base).digest("hex").slice(0, 40);
+    // Native CryptoHasher — no Node crypto allocation on the hot path.
+    const safeId = new Bun.CryptoHasher("sha1")
+      .update(base)
+      .digest("hex")
+      .slice(0, 40);
     return this.quote(`${safeId}`);
   }
 
@@ -1131,7 +1091,9 @@ export abstract class BaseAdapter extends EventEmitter {
     if (!name) {
       throw new DatabaseException("Failed to quote name: name is empty");
     }
-    return `"${name}"`;
+    // Escape embedded double quotes so quoting is injection-safe by
+    // construction; sanitized identifiers ([A-Za-z0-9_-]) are unaffected.
+    return `"${name.replace(/"/g, '""')}"`;
   }
 
   /**@deprecated */

@@ -4,6 +4,7 @@ export * from "./core/doc.js";
 export * from "./core/query.js";
 export * from "./core/emitter.js";
 export type { Filter, RelationshipUpdates, FilterValue } from "./core/types.js";
+export type { CacheDriver, CacheOperationOptions } from "./cache/index.js";
 
 export {
   AttributeEnum as AttributeType,

@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { SQL } from "bun";
 import { BaseAdapter } from "./base.js";
 import { PostgresClient, Transaction } from "./postgres.js";
 import {
@@ -24,12 +24,15 @@ import {
 export class Adapter extends BaseAdapter {
   protected client: PostgresClient | Transaction;
 
-  constructor(pool: Pool | PostgresClient | Transaction) {
+  constructor(
+    client:
+      SQL | string | Record<string, unknown> | PostgresClient | Transaction,
+  ) {
     super();
     this.client =
-      pool instanceof PostgresClient || pool instanceof Transaction
-        ? pool
-        : new PostgresClient(pool);
+      client instanceof PostgresClient || client instanceof Transaction
+        ? client
+        : new PostgresClient(client);
   }
 
   async create(name: string): Promise<void> {

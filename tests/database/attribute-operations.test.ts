@@ -5,7 +5,7 @@ import {
   beforeEach,
   afterAll,
   beforeAll,
-} from "vitest";
+} from "bun:test";
 import { Database } from "@core/database.js";
 import { createTestDb } from "../helpers.js";
 import { Doc } from "@core/doc.js";
