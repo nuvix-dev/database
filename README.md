@@ -422,8 +422,10 @@ PG_URL=postgres://postgres:postgres@localhost:5432/test_db
 
 ### Database Adapter Options
 
-The adapter is powered by Bun's native SQL client. Pass a connection string,
-a Bun `SQL` instance, or an options object:
+The adapter is powered by Bun's native SQL client. It accepts exactly two
+forms: a connection string, or a pre-configured Bun `SQL` instance. Plain
+option objects are **not** supported — use the `SQL` constructor for pool
+tuning:
 
 ```typescript
 import { Adapter } from "@nuvix/db";
