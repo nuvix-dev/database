@@ -1,0 +1,8 @@
+# Bun runtime configuration
+[test]
+# Tests require live Postgres + Redis (see docker-compose.yml)
+# Run: docker compose up -d && bun test
+coverage = false
+
+[install]
+exact = false

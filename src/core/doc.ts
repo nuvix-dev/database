@@ -537,7 +537,7 @@ export class Doc<
         output[key as string] = value;
       }
     }
-    if (!disallow.includes("$permissions")) {
+    if ("$permissions" in this.#_data && !disallow.includes("$permissions")) {
       output["$permissions"] = this.getPermissions();
     }
     return output as T;

@@ -25,6 +25,21 @@ interface TypeGenerationOptions {
   includeMetaDataTypes?: boolean;
 }
 
+/**
+ * Base entity interface emitted alongside imports so generated files are
+ * self-describing. Mirrors the runtime `IEntity` from src/types.ts.
+ */
+const IENTITY_DEFINITION = `export interface IEntity {
+  $id: string;
+  $createdAt: Date | string | null;
+  $updatedAt: Date | string | null;
+  $permissions: string[];
+  $sequence: number;
+  $collection: string;
+  $tenant?: number | null;
+  $schema?: string;
+}`;
+
 export function generateTypes(
   collections: Collection[],
   options: TypeGenerationOptions = {},
@@ -47,6 +62,7 @@ export function generateTypes(
   if (includeImports) {
     const imports = `import { Doc, IEntity } from "${packageName}";`;
     parts.push(imports);
+    parts.push(IENTITY_DEFINITION);
   }
 
   // Individual entity interfaces
@@ -287,7 +303,7 @@ function generateAttributeComment(attr: Attribute): string {
     comments.push(`@required`);
   }
 
-  if (attr.default !== undefined && !attr.required) {
+  if (attr.default !== undefined && attr.default !== null) {
     comments.push(`@default ${JSON.stringify(attr.default)}`);
   }
 
