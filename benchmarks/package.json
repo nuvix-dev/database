@@ -8,7 +8,7 @@
     "bench": "bun run compare-with-npm.ts"
   },
   "devDependencies": {
-    "@nuvix/cache": "^1.0.3-alpha.1",
+    "@nuvix/cache": "^2.0.0",
     "@nuvix/db-npm": "npm:@nuvix/db@0.2.5",
     "@types/bun": "^1.4.0",
     "pg": "^8.23.0"

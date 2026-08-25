@@ -40,7 +40,7 @@
     "url": "git+https://github.com/Nuvix-Tech/database.git"
   },
   "devDependencies": {
-    "@nuvix/cache": "^1.0.3-alpha.1",
+    "@nuvix/cache": "^2.0.0",
     "@types/bun": "^1.4.0",
     "typescript": "^5.8.3"
   },
