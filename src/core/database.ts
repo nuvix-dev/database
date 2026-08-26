@@ -45,7 +45,7 @@ import { Role } from "@utils/role.js";
 import { Permissions } from "@validators/permissions.js";
 import { Index as IndexValidator } from "@validators/index-validator.js";
 import { Documents } from "@validators/queries/documents.js";
-import { Authorization } from "@utils/authorization.js";
+import { authorize, AuthContext, SYSTEM_CONTEXT } from "./auth.js";
 import { ID } from "@utils/id.js";
 import { Structure } from "@validators/structure.js";
 import { Adapter } from "@adapters/adapter.js";
@@ -69,10 +69,98 @@ import {
   handleOnDelete,
   updateDocumentRelationships,
 } from "./document-relationships.js";
+import { Logger, LoggerOptions } from "@utils/logger.js";
+
+/**
+ * Module-private key exposing the ctx-first document-plane internals of
+ * {@link Database} to {@link Session}. The symbol is never exported, so code
+ * outside this file cannot even name it: the document plane is unreachable
+ * on Database from other modules, which enforces "sessions are the only
+ * document API" at compile time.
+ */
+const documentPlane = Symbol("nuvix.db.documentPlane");
+
+/**
+ * Rebuilds the error text previously produced by the mutable
+ * `Authorization.$description` side-channel so thrown messages keep their
+ * historical format.
+ */
+const authorizationError = (
+  action: PermissionEnum,
+  permissions: string[],
+  roles: readonly string[],
+): string =>
+  permissions.length === 0
+    ? `No permissions provided for action '${action}'.`
+    : `Missing "${action}" permission for role "${permissions[permissions.length - 1]}". Only "${JSON.stringify(roles)}" scopes are allowed and "${JSON.stringify(permissions)}" was given.`;
+
+/**
+ * Pure guard: throws an AuthorizationException carrying the legacy message
+ * when `authorize(ctx, permissions, action)` denies the action.
+ */
+const ensureAuthorized = (
+  ctx: AuthContext,
+  permissions: string[],
+  action: PermissionEnum,
+): void => {
+  if (!authorize(ctx, permissions, action)) {
+    throw new AuthorizationException(
+      authorizationError(action, permissions, ctx.roles),
+    );
+  }
+};
 
 export class Database extends Cache {
   private static readonly NUMERIC_ATTRIBUTE_TYPES: ReadonlySet<AttributeEnum> =
     new Set([AttributeEnum.Integer, AttributeEnum.Float]);
+
+  /**
+   * Ctx-first document-plane operations bound to this instance. Keyed by the
+   * module-private `documentPlane` symbol; see {@link Session}.
+   */
+  public readonly [documentPlane]: DocumentPlane;
+
+  /**
+   * Constructs a real, independently-owned {@link Database} bound to the
+   * transaction adapter (see {@link Base.withTransaction}). Unlike the
+   * prototype-clone approach it replaces, the scoped instance OWNS every
+   * mutable field — filters, caches, relation stack, event listeners and
+   * its own `[documentPlane]` closures bound to itself — so concurrent or
+   * nested transaction scopes can never alias state into each other or
+   * into the parent.
+   *
+   * Scalar configuration is copied by value; mutable containers are freshly
+   * created by the constructor and seeded from this instance, never shared
+   * by reference. Per-operation guards (`_relationStack`) and caches
+   * (`decodeAttributesCache`) intentionally start fresh.
+   */
+  protected createTransactionalScope(txAdapter: Adapter): this {
+    const scope = new Database(txAdapter, this.cache, {
+      filters: { ...this.instanceFilters },
+      logger: this.logger,
+    });
+
+    // Copy scalar configuration by value — the scope owns its own settings.
+    scope.timestamp = this.timestamp;
+    scope.filter = this.filter;
+    scope.validate = this.validate;
+    scope.preserveDates = this.preserveDates;
+    scope.maxQueryValues = this.maxQueryValues;
+    scope.resolveRelationships = this.resolveRelationships;
+    scope.checkRelationshipsExist = this.checkRelationshipsExist;
+    scope.isMigrating = this.isMigrating;
+    scope._collectionEnabledValidate = this._collectionEnabledValidate;
+    scope.attachSchemaInDocument = this.attachSchemaInDocument;
+
+    // Seed the scope-owned collections map with a copy of ours.
+    Object.assign(scope.globalCollections, this.globalCollections);
+
+    // Re-register parent listeners on the scope's own emitter so events
+    // triggered inside the transaction still reach them.
+    this.copyListenersTo(scope);
+
+    return scope as this;
+  }
 
   constructor(
     adapter: Adapter,
@@ -80,6 +168,137 @@ export class Database extends Cache {
     options: DatabaseOptions = {},
   ) {
     super(adapter, cache, options);
+
+    // Bind every document-plane operation to this instance. Sessions share
+    // the adapter, cache and instance state through these closures — no new
+    // pool or connection is created.
+    this[documentPlane] = {
+      find: (ctx, collectionId, query, forPermission) =>
+        this.find(ctx, collectionId, query, forPermission),
+      findOne: (ctx, collectionId, query) =>
+        this.findOne(ctx, collectionId, query),
+      getDocument: (ctx, collectionId, id, query, forUpdate) =>
+        this.getDocument(ctx, collectionId, id, query, forUpdate),
+      createDocument: (ctx, collectionId, document) =>
+        this.createDocument(ctx, collectionId, document),
+      createDocuments: (ctx, collectionId, documents) =>
+        this.createDocuments(ctx, collectionId, documents),
+      updateDocument: (ctx, collectionId, id, document) =>
+        this.updateDocument(ctx, collectionId, id, document),
+      updateDocuments: (
+        ctx,
+        collectionId,
+        updates,
+        query,
+        batchSize,
+        onNext,
+        onError,
+      ) =>
+        this.updateDocuments(
+          ctx,
+          collectionId,
+          updates,
+          query,
+          batchSize,
+          onNext,
+          onError,
+        ),
+      deleteDocument: (ctx, collectionId, id) =>
+        this.deleteDocument(ctx, collectionId, id),
+      deleteDocuments: (ctx, collectionId, query) =>
+        this.deleteDocuments(ctx, collectionId, query),
+      deleteDocumentsBatch: (
+        ctx,
+        collectionId,
+        query,
+        batchSize,
+        onNext,
+        onError,
+      ) =>
+        this.deleteDocumentsBatch(
+          ctx,
+          collectionId,
+          query,
+          batchSize,
+          onNext,
+          onError,
+        ),
+      createOrUpdateDocuments: (ctx, collectionId, documents, batchSize, onNext) =>
+        this.createOrUpdateDocuments(ctx, collectionId, documents, batchSize, onNext),
+      createOrUpdateDocumentsWithIncrease: (
+        ctx,
+        collectionId,
+        attribute,
+        documents,
+        batchSize,
+        onNext,
+      ) =>
+        this.createOrUpdateDocumentsWithIncrease(
+          ctx,
+          collectionId,
+          attribute,
+          documents,
+          batchSize,
+          onNext,
+        ),
+      increaseDocumentAttribute: (ctx, collectionId, id, attribute, value, max) =>
+        this.increaseDocumentAttribute(
+          ctx,
+          collectionId,
+          id,
+          attribute,
+          value,
+          max,
+        ),
+      decreaseDocumentAttribute: (ctx, collectionId, id, attribute, value, min) =>
+        this.decreaseDocumentAttribute(
+          ctx,
+          collectionId,
+          id,
+          attribute,
+          value,
+          min,
+        ),
+      count: (ctx, collectionId, query, max) =>
+        this.count(ctx, collectionId, query, max),
+      sum: (ctx, collectionId, attribute, query, max) =>
+        this.sum(ctx, collectionId, attribute, query, max),
+      purgeCachedDocument: (collectionId, doc) =>
+        this.purgeCachedDocument(collectionId, doc),
+      purgeCachedCollection: (collection) =>
+        this.purgeCachedCollection(collection),
+      withTransaction: (ctx, callback) =>
+        this.withTransaction(async (txDatabase) =>
+          callback(new Session(txDatabase as Database, ctx)),
+        ),
+    };
+  }
+
+  /**
+   * Opens a scoped session that carries an immutable AuthContext built from
+   * the given roles. Accepts either varargs (`db.for("user:1", "team:2")`)
+   * or a single array (`db.for(["user:1", "team:2"])`).
+   *
+   * The session exposes ONLY document-plane operations; schema/admin
+   * operations remain on the Database instance itself.
+   */
+  public for(...roles: string[] | [string[]]): Session {
+    const roleList: string[] = Array.isArray(roles[0])
+      ? (roles[0] as string[])
+      : (roles as string[]);
+    return new Session(
+      this,
+      Object.freeze({ roles: Object.freeze(roleList) }),
+    );
+  }
+
+  /**
+   * Opens a privileged system session carrying SYSTEM_CONTEXT. Every
+   * document-plane operation on it bypasses authorization checks — the
+   * explicit-ctx replacement for the removed global skip mechanism.
+   */
+  public system(): Session {
+    return new Session(this, SYSTEM_CONTEXT);
   }
 
   /**
@@ -256,13 +475,12 @@ export class Database extends Cache {
     if (id === Database.METADATA) return new Doc(Database.COLLECTION);
 
     const createdCollection = await this.silent(() =>
-      this.createDocument(Database.METADATA, collection),
+      this.createDocument(SYSTEM_CONTEXT, Database.METADATA, collection),
     );
     this.trigger(EventsEnum.CollectionCreate, createdCollection);
 
     return createdCollection;
   }
-
   /**
    * Update collection permissions & documentSecurity.
    */
@@ -295,7 +513,12 @@ export class Database extends Cache {
     collection.set("enabled", enabled);
 
     collection = await this.silent(() =>
-      this.updateDocument(Database.METADATA, collection.getId(), collection),
+      this.updateDocument(
+        SYSTEM_CONTEXT,
+        Database.METADATA,
+        collection.getId(),
+        collection,
+      ),
     );
     this.trigger(EventsEnum.CollectionUpdate, collection);
 
@@ -311,7 +534,7 @@ export class Database extends Cache {
     throwOnNotFound?: boolean,
   ): Promise<Doc<Collection>> {
     let collection = await this.silent(() =>
-      this.getDocument<Collection>(Database.METADATA, id),
+      this.getDocument(SYSTEM_CONTEXT, Database.METADATA, id),
     );
 
     if (
@@ -347,7 +570,7 @@ export class Database extends Cache {
   ): Promise<Doc<Collection>[]> {
     const query = [Query.limit(limit), Query.offset(offset)];
 
-    return this.find<Collection>(Database.METADATA, query);
+    return this.find(SYSTEM_CONTEXT, Database.METADATA, query);
   }
 
   /**
@@ -406,7 +629,7 @@ export class Database extends Cache {
    */
   public async deleteCollection(id: string): Promise<boolean> {
     const collection = await this.silent(() =>
-      this.getDocument(Database.METADATA, id),
+      this.getDocument(SYSTEM_CONTEXT, Database.METADATA, id),
     );
 
     if (collection.empty() || collection.getId() === Database.METADATA) {
@@ -423,7 +646,8 @@ export class Database extends Cache {
     const relationships = collection
       .get("attributes", [])
       .filter(
-        (attribute) => attribute.get("type") === AttributeEnum.Relationship,
+        (attribute: Doc<Attribute>) =>
+          attribute.get("type") === AttributeEnum.Relationship,
       );
 
     return await this.withTransaction(async (db) => {
@@ -452,7 +676,7 @@ export class Database extends Cache {
         deleted = true;
       } else {
         deleted = await db.silent(() =>
-          db.deleteDocument(Database.METADATA, id),
+          db.deleteDocument(SYSTEM_CONTEXT, Database.METADATA, id),
         );
       }
 
@@ -499,7 +723,7 @@ export class Database extends Cache {
 
     if (collection.getId() !== Database.METADATA) {
       collection = await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
+        this.updateDocument(SYSTEM_CONTEXT, Database.METADATA, collection.getId(), collection),
       );
     }
 
@@ -542,7 +766,7 @@ export class Database extends Cache {
 
     if (collection.getId() !== Database.METADATA) {
       collection = await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
+        this.updateDocument(SYSTEM_CONTEXT, Database.METADATA, collection.getId(), collection),
       );
     }
 
@@ -608,7 +832,7 @@ export class Database extends Cache {
     // Save
     collection.set("attributes", attributes);
     await this.silent(() =>
-      this.updateDocument(Database.METADATA, collection.getId(), collection),
+      this.updateDocument(SYSTEM_CONTEXT, Database.METADATA, collection.getId(), collection),
     );
 
     this.trigger(EventsEnum.AttributeUpdate, collection, attributes[index]!);
@@ -934,7 +1158,7 @@ export class Database extends Cache {
 
     if (collection.getId() !== Database.METADATA) {
       await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
+        this.updateDocument(SYSTEM_CONTEXT, Database.METADATA, collection.getId(), collection),
       );
     }
 
@@ -1003,7 +1227,7 @@ export class Database extends Cache {
 
     if (collection.getId() !== Database.METADATA) {
       await this.silent(() =>
-        this.updateDocument(Database.METADATA, collection.getId(), collection),
+        this.updateDocument(SYSTEM_CONTEXT, Database.METADATA, collection.getId(), collection),
       );
     }
 
@@ -1107,26 +1331,13 @@ export class Database extends Cache {
 
   /**
    * Get a document by ID.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}. The session's AuthContext gates cached and fresh reads
+   * against collection/document read permissions.
    */
-  public getDocument<C extends string & keyof Entities>(
-    collectionId: C,
-    id: string,
-    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
-    forUpdate?: boolean,
-  ): Promise<Doc<Entities[C]>>;
-  public getDocument<C extends string>(
-    collectionId: C,
-    id: string,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-    forUpdate?: boolean,
-  ): Promise<Doc<Partial<IEntity> & Record<string, any>>>;
-  public getDocument<D extends Record<string, any>>(
-    collectionId: string,
-    id: string,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-    forUpdate?: boolean,
-  ): Promise<Doc<Partial<IEntity> & D>>;
-  public async getDocument(
+  private async getDocument(
+    ctx: AuthContext,
     collectionId: string,
     id: string,
     query: ((builder: QueryBuilder) => QueryBuilder) | Query[] = [],
@@ -1146,7 +1357,7 @@ export class Database extends Cache {
     const collection = await this.silent(() =>
       this.getCollection(collectionId, true),
     );
-    const processedQuery = await this.processQueries(query, collection, {
+    const processedQuery = await this.processQueries(ctx, query, collection, {
       forUpdate,
       overrideValidators: [MethodType.Populate, MethodType.Select],
     });
@@ -1183,8 +1394,7 @@ export class Database extends Cache {
             ...(documentSecurity ? doc.getRead() : []),
           ];
 
-          const authorization = new Authorization(PermissionEnum.Read);
-          if (!authorization.$valid(readPermissions)) {
+          if (!authorize(ctx, readPermissions, PermissionEnum.Read)) {
             return new Doc();
           }
         }
@@ -1195,6 +1405,7 @@ export class Database extends Cache {
 
       doc =
         (await this.adapter.getDocument(
+          SYSTEM_CONTEXT,
           collection.getId(),
           id,
           processedQuery,
@@ -1207,16 +1418,14 @@ export class Database extends Cache {
           ...(documentSecurity ? doc.getRead() : []),
         ];
 
-        const authorization = new Authorization(PermissionEnum.Read);
-        if (!authorization.$valid(readPermissions)) {
+        if (!authorize(ctx, readPermissions, PermissionEnum.Read)) {
           return new Doc();
         }
       }
     } else {
-      const authorization = new Authorization(PermissionEnum.Read);
       if (
         collection.getId() !== Database.METADATA &&
-        !authorization.$valid(collection.getRead())
+        !authorize(ctx, collection.getRead(), PermissionEnum.Read)
       ) {
         return new Doc();
       }
@@ -1226,7 +1435,11 @@ export class Database extends Cache {
         filters: [Query.equal("$id", [id])],
       };
 
-      const documents = await this.adapter.find(collectionId, queryWithId);
+      const documents = await this.adapter.find(
+        SYSTEM_CONTEXT,
+        collectionId,
+        queryWithId,
+      );
       const processedDocuments = this.processFindResults(
         documents,
         queryWithId,
@@ -1258,21 +1471,15 @@ export class Database extends Cache {
 
   /**
    * Create a new document.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async createDocument<C extends keyof Entities>(
-    collectionId: C,
-    document: Doc<Entities[C]> | Entities[C],
-  ): Promise<Doc<Entities[C]>>;
-  public async createDocument<D extends Record<string, any>, C extends string>(
-    collectionId: C,
-    document: C extends keyof Entities
-      ? Doc<Entities[C]> | Entities[C]
-      : Doc<D> | D,
-  ): Promise<Doc<D>>;
-  public async createDocument(
+  private async createDocument(
+    ctx: AuthContext,
     collectionId: string,
-    document: Doc<Partial<IEntity>> | Partial<IEntity>,
-  ): Promise<Doc<Partial<IEntity>>> {
+    document: Doc<Record<string, any>> | Record<string, any>,
+  ): Promise<Doc<any>> {
     if (
       collectionId !== Database.METADATA &&
       this.adapter.$sharedTables &&
@@ -1295,10 +1502,7 @@ export class Database extends Cache {
     );
 
     if (collection.getId() !== Database.METADATA) {
-      const authorization = new Authorization(PermissionEnum.Create);
-      if (!authorization.$valid(collection.getCreate())) {
-        throw new AuthorizationException(authorization.$description);
-      }
+      ensureAuthorized(ctx, collection.getCreate(), PermissionEnum.Create);
     }
 
     const time = new Date().toISOString();
@@ -1354,7 +1558,7 @@ export class Database extends Cache {
 
     const result = await this.withTransaction(async (db) => {
       doc = await this.silent(() => db.createRelationships(collection, doc));
-      return db.adapter.createDocument(collection.getId(), doc);
+      return db.adapter.createDocument(SYSTEM_CONTEXT, collection.getId(), doc);
     });
 
     const castedResult = this.cast(collection, result);
@@ -1424,21 +1628,12 @@ export class Database extends Cache {
 
   /**
    * Create multiple documents in a collection.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async createDocuments<C extends string & keyof Entities>(
-    collectionId: C,
-    documents: Doc<Entities[C]>[] | Entities[C][],
-  ): Promise<Doc<Entities[C]>[]>;
-  public async createDocuments<
-    D extends Doc<Record<string, any>>,
-    C extends string,
-  >(
-    collectionId: C,
-    documents: C extends keyof Entities
-      ? Doc<Entities[C]>[] | Entities[C][]
-      : Doc<D>[] | D[],
-  ): Promise<D[]>;
-  public async createDocuments<D extends Doc<Record<string, any>>>(
+  private async createDocuments<D extends Doc<Record<string, any>>>(
+    ctx: AuthContext,
     collectionId: string,
     documents: D[],
   ): Promise<Doc[]> {
@@ -1455,10 +1650,7 @@ export class Database extends Cache {
       this.getCollection(collectionId, true),
     );
     if (collection.getId() !== Database.METADATA) {
-      const authorization = new Authorization(PermissionEnum.Create);
-      if (!authorization.$valid(collection.getCreate())) {
-        throw new AuthorizationException(authorization.$description);
-      }
+      ensureAuthorized(ctx, collection.getCreate(), PermissionEnum.Create);
     }
 
     const time = new Date().toISOString();
@@ -1522,7 +1714,11 @@ export class Database extends Cache {
       const resolvedDocuments = await Promise.all(
         createdDocuments.map((doc) => db.createRelationships(collection, doc)),
       );
-      return db.adapter.createDocuments(collection.getId(), resolvedDocuments);
+      return db.adapter.createDocuments(
+        SYSTEM_CONTEXT,
+        collection.getId(),
+        resolvedDocuments,
+      );
     });
     const castedDocuments = updatedDocuments.map((doc) =>
       this.cast(collection, doc),
@@ -1538,18 +1734,12 @@ export class Database extends Cache {
 
   /**
    * Update a document.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async updateDocument<C extends string & keyof Entities>(
-    collectionId: C,
-    id: string,
-    document: Entities[C] | Doc<Entities[C]>,
-  ): Promise<Doc<Entities[C]>>;
-  public async updateDocument<D extends Doc<Record<string, any>>>(
-    collectionId: string,
-    id: string,
-    document: D | Doc<D>,
-  ): Promise<D>;
-  public async updateDocument(
+  private async updateDocument(
+    ctx: AuthContext,
     collectionId: string,
     id: string,
     document: Doc<Record<string, any>> | Record<string, any>,
@@ -1565,7 +1755,7 @@ export class Database extends Cache {
     const updatedDocument = await this.withTransaction(async (db) => {
       const time = new Date().toISOString();
       const old = await this.silent(() =>
-        db.getDocument(collection.getId(), id, [], true),
+        db.getDocument(SYSTEM_CONTEXT, collection.getId(), id, [], true),
       );
 
       if (old.empty()) {
@@ -1639,12 +1829,12 @@ export class Database extends Cache {
 
         if (
           shouldUpdate &&
-          !new Authorization(PermissionEnum.Update).$valid(updatePermissions)
+          !authorize(ctx, updatePermissions, PermissionEnum.Update)
         ) {
           throw new AuthorizationException("Update not authorized");
         } else if (
           !shouldUpdate &&
-          !new Authorization(PermissionEnum.Read).$valid(readPermissions)
+          !authorize(ctx, readPermissions, PermissionEnum.Read)
         ) {
           throw new AuthorizationException("Read not authorized");
         }
@@ -1666,6 +1856,7 @@ export class Database extends Cache {
         doc = await db.updateDocumentRelationships(collection, encodedDocument);
       }
       await db.adapter.updateDocument(
+        SYSTEM_CONTEXT,
         collection.getId(),
         doc as Doc<IEntity>,
         skipPermissionsUpdate,
@@ -1702,27 +1893,12 @@ export class Database extends Cache {
 
   /**
    * Update multiple documents in a collection.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async updateDocuments<C extends string & keyof Entities>(
-    collectionId: C,
-    updates: Doc<Entities[C]>,
-    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
-    batchSize?: number,
-    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
-    onError?: (error: Error) => void | Promise<void>,
-  ): Promise<number>;
-  public async updateDocuments<
-    D extends Doc<Record<string, any>>,
-    C extends string,
-  >(
-    collectionId: C,
-    updates: C extends keyof Entities ? Doc<Entities[C]> : D,
-    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
-    batchSize?: number,
-    onNext?: (doc: D) => void | Promise<void>,
-    onError?: (error: Error) => void | Promise<void>,
-  ): Promise<number>;
-  public async updateDocuments(
+  private async updateDocuments(
+    ctx: AuthContext,
     collectionId: string,
     updates: Doc<Partial<IEntity> & Record<string, any>>,
     query: Query[] | ((qb: QueryBuilder) => QueryBuilder) = [],
@@ -1744,15 +1920,17 @@ export class Database extends Cache {
     );
 
     const documentSecurity = collection.get("documentSecurity", false);
-    const authorization = new Authorization(PermissionEnum.Update);
-    const skipAuth = authorization.$valid(collection.getUpdate());
+    const updatePermissions = collection.getUpdate();
+    const skipAuth = authorize(ctx, updatePermissions, PermissionEnum.Update);
 
     if (
       !skipAuth &&
       !documentSecurity &&
       collection.getId() !== Database.METADATA
     ) {
-      throw new AuthorizationException(authorization.$description);
+      throw new AuthorizationException(
+        authorizationError(PermissionEnum.Update, updatePermissions, ctx.roles),
+      );
     }
 
     const attributes = collection.get("attributes", []);
@@ -1822,6 +2000,7 @@ export class Database extends Cache {
 
       const batch = await this.silent(() =>
         this.find(
+          ctx,
           collection.getId(),
           [...batchQueries, ...queries],
           PermissionEnum.Update,
@@ -1878,6 +2057,7 @@ export class Database extends Cache {
         }
 
         await db.adapter.updateDocuments(
+          SYSTEM_CONTEXT,
           collection.getId(),
           encodedUpdates,
           processedBatch,
@@ -1934,16 +2114,12 @@ export class Database extends Cache {
 
   /**
    * Delete document by ID.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async deleteDocument<C extends string & keyof Entities>(
-    collectionId: C,
-    id: string,
-  ): Promise<boolean>;
-  public async deleteDocument<C extends string>(
-    collectionId: C,
-    id: string,
-  ): Promise<boolean>;
-  public async deleteDocument(
+  private async deleteDocument(
+    ctx: AuthContext,
     collectionId: string,
     id: string,
   ): Promise<boolean> {
@@ -1953,26 +2129,26 @@ export class Database extends Cache {
 
     let document!: Doc;
     const deleted = await this.withTransaction(async (db) => {
-      document = await Authorization.skip(() =>
-        this.silent(() => db.getDocument(collection.getId(), id, [], true)),
+      // The pre-delete fetch is engine-internal: the permission decision is
+      // made below against the caller's ctx (formerly a global-skip wrap).
+      document = await this.silent(() =>
+        db.getDocument(SYSTEM_CONTEXT, collection.getId(), id, [], true),
       );
 
       if (document.empty()) {
         return false;
       }
 
-      const validator = new Authorization(PermissionEnum.Delete);
-
       if (collection.getId() !== Database.METADATA) {
         const documentSecurity = collection.get("documentSecurity", true);
-        if (
-          !validator.$valid([
+        ensureAuthorized(
+          ctx,
+          [
             ...collection.getDelete(),
             ...(documentSecurity ? document.getDelete() : []),
-          ])
-        ) {
-          throw new AuthorizationException(validator.$description);
-        }
+          ],
+          PermissionEnum.Delete,
+        );
       }
 
       // Check if document was updated after the request timestamp
@@ -1987,6 +2163,7 @@ export class Database extends Cache {
         db.deleteDocumentRelationships(collection, document),
       );
       const result = await db.adapter.deleteDocument(
+        SYSTEM_CONTEXT,
         collection.getId(),
         document,
       );
@@ -2006,16 +2183,12 @@ export class Database extends Cache {
 
   /**
    * Delete multiple documents in a collection.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async deleteDocuments<C extends string & keyof Entities>(
-    collectionId: C,
-    query?: Query[] | ((qb: QueryBuilder<C>) => QueryBuilder<C>),
-  ): Promise<string[]>;
-  public async deleteDocuments(
-    collectionId: string,
-    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
-  ): Promise<string[]>;
-  public async deleteDocuments(
+  private async deleteDocuments(
+    ctx: AuthContext,
     collectionId: string,
     query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
   ): Promise<string[]> {
@@ -2028,10 +2201,11 @@ export class Database extends Cache {
     } else queries = query ?? [];
 
     const deletedIds = await this.withTransaction(async (db) => {
-      const processedQueries = await db.processQueries(queries, collection, {
+      const processedQueries = await db.processQueries(ctx, queries, collection, {
         forPermission: PermissionEnum.Delete,
       });
       const result = await db.adapter.deleteDocuments(
+        SYSTEM_CONTEXT,
         collection.getId(),
         processedQueries,
       );
@@ -2056,25 +2230,11 @@ export class Database extends Cache {
   /**
    * Delete multiple documents in a collection with batch processing.
    *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async deleteDocumentsBatch<C extends string & keyof Entities>(
-    collectionId: C,
-    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
-    batchSize?: number,
-    onNext?: (
-      doc: Doc<Entities[C]>,
-      old: Doc<Entities[C]>,
-    ) => void | Promise<void>,
-    onError?: (error: Error) => void | Promise<void>,
-  ): Promise<number>;
-  public async deleteDocumentsBatch<D extends IEntity = IEntity>(
-    collectionId: string,
-    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
-    batchSize?: number,
-    onNext?: (doc: Doc<D>, old: Doc<D>) => void | Promise<void>,
-    onError?: (error: Error) => void | Promise<void>,
-  ): Promise<number>;
-  public async deleteDocumentsBatch(
+  private async deleteDocumentsBatch(
+    ctx: AuthContext,
     collectionId: string,
     query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
     batchSize: number = Database.DELETE_BATCH_SIZE,
@@ -2097,15 +2257,17 @@ export class Database extends Cache {
     }
 
     const documentSecurity = collection.get("documentSecurity", false);
-    const authorization = new Authorization(PermissionEnum.Delete);
-    const skipAuth = authorization.$valid(collection.getDelete());
+    const deletePermissions = collection.getDelete();
+    const skipAuth = authorize(ctx, deletePermissions, PermissionEnum.Delete);
 
     if (
       !skipAuth &&
       !documentSecurity &&
       collection.getId() !== Database.METADATA
     ) {
-      throw new AuthorizationException(authorization.$description);
+      throw new AuthorizationException(
+        authorizationError(PermissionEnum.Delete, deletePermissions, ctx.roles),
+      );
     }
 
     let queries: Query[];
@@ -2154,6 +2316,7 @@ export class Database extends Cache {
 
       const batch = await this.silent(() =>
         this.find(
+          ctx,
           collection.getId(),
           [...batchQueries, ...queries],
           PermissionEnum.Delete,
@@ -2191,6 +2354,7 @@ export class Database extends Cache {
         }
 
         await db.adapter.deleteDocumentsBySequences(
+          SYSTEM_CONTEXT,
           collection.getId(),
           sequences,
           permissionIds,
@@ -2275,29 +2439,19 @@ export class Database extends Cache {
 
   /**
    * Create or update documents in a collection.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async createOrUpdateDocuments<C extends string & keyof Entities>(
-    collectionId: C,
-    documents: Doc<Entities[C]>[],
-    batchSize?: number,
-    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
-  ): Promise<number>;
-  public async createOrUpdateDocuments<
-    D extends Doc<Record<string, any>>,
-    C extends string,
-  >(
-    collectionId: C,
-    documents: C extends keyof Entities ? Doc<Entities[C]>[] : D[],
-    batchSize?: number,
-    onNext?: (doc: D) => void | Promise<void>,
-  ): Promise<number>;
-  public async createOrUpdateDocuments(
+  private async createOrUpdateDocuments(
+    ctx: AuthContext,
     collectionId: string,
     documents: Doc<Record<string, any>>[],
     batchSize: number = Database.DEFAULT_BATCH_SIZE,
     onNext?: (doc: Doc<any>) => void | Promise<void>,
   ): Promise<number> {
     return this.createOrUpdateDocumentsWithIncrease(
+      ctx,
       collectionId,
       "",
       documents,
@@ -2308,27 +2462,12 @@ export class Database extends Cache {
 
   /**
    * Create or update documents, increasing the value of the given attribute by the value in each document.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async createOrUpdateDocumentsWithIncrease<
-    C extends string & keyof Entities,
-  >(
-    collectionId: C,
-    attribute: keyof Entities[C] & string,
-    documents: Doc<Entities[C]>[],
-    batchSize?: number,
-    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
-  ): Promise<number>;
-  public async createOrUpdateDocumentsWithIncrease<
-    D extends Doc<Record<string, any>>,
-    C extends string,
-  >(
-    collectionId: C,
-    attribute: string,
-    documents: C extends keyof Entities ? Doc<Entities[C]>[] : D[],
-    batchSize?: number,
-    onNext?: (doc: D) => void | Promise<void>,
-  ): Promise<number>;
-  public async createOrUpdateDocumentsWithIncrease(
+  private async createOrUpdateDocumentsWithIncrease(
+    ctx: AuthContext,
     collectionId: string,
     attribute: string,
     documents: Doc<Record<string, any>>[],
@@ -2360,18 +2499,18 @@ export class Database extends Cache {
 
       let old: Doc<any>;
       if (this.adapter.$sharedTables && this.adapter.$tenantPerDocument) {
-        old = await Authorization.skip(() =>
-          this.withTenant(document.getTenant(), () =>
-            this.silent(() =>
-              this.getDocument(collection.getId(), document.getId()),
+        old = await this.withTenant(document.getTenant(), () =>
+          this.silent(() =>
+            this.getDocument(
+              SYSTEM_CONTEXT,
+              collection.getId(),
+              document.getId(),
             ),
           ),
         );
       } else {
-        old = await Authorization.skip(() =>
-          this.silent(() =>
-            this.getDocument(collection.getId(), document.getId()),
-          ),
+        old = await this.silent(() =>
+          this.getDocument(SYSTEM_CONTEXT, collection.getId(), document.getId()),
         );
       }
 
@@ -2401,21 +2540,17 @@ export class Database extends Cache {
       }
 
       // Check permissions
-      const validator = new Authorization(
-        old.empty() ? PermissionEnum.Create : PermissionEnum.Update,
-      );
-
       if (old.empty()) {
-        if (!validator.$valid(collection.getCreate())) {
-          throw new AuthorizationException(validator.$description);
-        }
-      } else if (
-        !validator.$valid([
-          ...collection.getUpdate(),
-          ...(documentSecurity ? old.getUpdate() : []),
-        ])
-      ) {
-        throw new AuthorizationException(validator.$description);
+        ensureAuthorized(ctx, collection.getCreate(), PermissionEnum.Create);
+      } else {
+        ensureAuthorized(
+          ctx,
+          [
+            ...collection.getUpdate(),
+            ...(documentSecurity ? old.getUpdate() : []),
+          ],
+          PermissionEnum.Update,
+        );
       }
 
       const updatedAt = document.updatedAt();
@@ -2509,12 +2644,11 @@ export class Database extends Cache {
 
     for (const chunk of chunks) {
       const batch = await this.withTransaction((db) =>
-        Authorization.skip(() =>
-          db.adapter.createOrUpdateDocuments(
-            collection.getId(),
-            attribute,
-            chunk,
-          ),
+        db.adapter.createOrUpdateDocuments(
+          SYSTEM_CONTEXT,
+          collection.getId(),
+          attribute,
+          chunk,
         ),
       );
 
@@ -2568,22 +2702,12 @@ export class Database extends Cache {
 
   /**
    * Increase a numeric attribute value in a document.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async increaseDocumentAttribute<C extends string & keyof Entities>(
-    collectionId: C,
-    id: string,
-    attribute: keyof Entities[C] & string,
-    value?: number,
-    max?: number,
-  ): Promise<Doc<Entities[C]>>;
-  public async increaseDocumentAttribute<C extends string>(
-    collectionId: C,
-    id: string,
-    attribute: string,
-    value?: number,
-    max?: number,
-  ): Promise<Doc<any>>;
-  public async increaseDocumentAttribute(
+  private async increaseDocumentAttribute(
+    ctx: AuthContext,
     collectionId: string,
     id: string,
     attribute: string,
@@ -2619,26 +2743,26 @@ export class Database extends Cache {
     }
 
     const document = await this.withTransaction(async (db) => {
-      const doc = await Authorization.skip(() =>
-        db.silent(() => db.getDocument(collection.getId(), id, [], true)),
+      // Engine-internal fetch; permission decision happens below against ctx
+      // (formerly a global-skip wrap).
+      const doc = await this.silent(() =>
+        db.getDocument(SYSTEM_CONTEXT, collection.getId(), id, [], true),
       );
 
       if (doc.empty()) {
         throw new NotFoundException("Document not found");
       }
 
-      const validator = new Authorization(PermissionEnum.Update);
-
       if (collection.getId() !== Database.METADATA) {
         const documentSecurity = collection.get("documentSecurity", false);
-        if (
-          !validator.$valid([
+        ensureAuthorized(
+          ctx,
+          [
             ...collection.getUpdate(),
             ...(documentSecurity ? doc.getUpdate() : []),
-          ])
-        ) {
-          throw new AuthorizationException(validator.$description);
-        }
+          ],
+          PermissionEnum.Update,
+        );
       }
 
       const currentValue = doc.get(attribute);
@@ -2655,6 +2779,7 @@ export class Database extends Cache {
       const maxValue = max !== undefined ? max - value : undefined;
 
       await db.adapter.increaseDocumentAttribute({
+        ctx: SYSTEM_CONTEXT,
         collection: collection.getId(),
         id,
         attribute,
@@ -2675,22 +2800,12 @@ export class Database extends Cache {
 
   /**
    * Decrease a numeric attribute value in a document.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public async decreaseDocumentAttribute<C extends string & keyof Entities>(
-    collectionId: C,
-    id: string,
-    attribute: keyof Entities[C] & string,
-    value?: number,
-    min?: number,
-  ): Promise<Doc<Entities[C]>>;
-  public async decreaseDocumentAttribute<C extends string>(
-    collectionId: C,
-    id: string,
-    attribute: string,
-    value?: number,
-    min?: number,
-  ): Promise<Doc<any>>;
-  public async decreaseDocumentAttribute(
+  private async decreaseDocumentAttribute(
+    ctx: AuthContext,
     collectionId: string,
     id: string,
     attribute: string,
@@ -2726,26 +2841,26 @@ export class Database extends Cache {
     }
 
     const document = await this.withTransaction(async (db) => {
-      const doc = await Authorization.skip(() =>
-        db.silent(() => db.getDocument(collection.getId(), id, [], true)),
+      // Engine-internal fetch; permission decision happens below against ctx
+      // (formerly a global-skip wrap).
+      const doc = await this.silent(() =>
+        db.getDocument(SYSTEM_CONTEXT, collection.getId(), id, [], true),
       );
 
       if (doc.empty()) {
         throw new NotFoundException("Document not found");
       }
 
-      const validator = new Authorization(PermissionEnum.Update);
-
       if (collection.getId() !== Database.METADATA) {
         const documentSecurity = collection.get("documentSecurity", false);
-        if (
-          !validator.$valid([
+        ensureAuthorized(
+          ctx,
+          [
             ...collection.getUpdate(),
             ...(documentSecurity ? doc.getUpdate() : []),
-          ])
-        ) {
-          throw new AuthorizationException(validator.$description);
-        }
+          ],
+          PermissionEnum.Update,
+        );
       }
 
       const currentValue = doc.get(attribute);
@@ -2761,6 +2876,7 @@ export class Database extends Cache {
       const minValue = min !== undefined ? min + value : undefined;
 
       await db.adapter.increaseDocumentAttribute({
+        ctx: SYSTEM_CONTEXT,
         collection: collection.getId(),
         id,
         attribute,
@@ -2781,23 +2897,13 @@ export class Database extends Cache {
 
   /**
    * find documents.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}. The ctx flows to the adapter, which applies the
+   * per-document `_perms` filter for documentSecurity collections.
    */
-  public find<C extends string & keyof Entities>(
-    collectionId: C,
-    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
-    forPermission?: PermissionEnum,
-  ): Promise<Doc<Entities[C]>[]>;
-  public find<C extends string>(
-    collectionId: C,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-    forPermission?: PermissionEnum,
-  ): Promise<Doc<Partial<IEntity> & Record<string, any>>[]>;
-  public find<D extends Record<string, any>>(
-    collectionId: string,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-    forPermission?: PermissionEnum,
-  ): Promise<Doc<Partial<IEntity> & D>[]>;
-  public async find(
+  private async find(
+    ctx: AuthContext,
     collectionId: string,
     query: ((builder: QueryBuilder) => QueryBuilder) | Query[] = [],
     forPermission: PermissionEnum = PermissionEnum.Read,
@@ -2813,15 +2919,18 @@ export class Database extends Cache {
     const queries: Query[] =
       typeof query === "function" ? query(new QueryBuilder()).build() : query;
 
-    const processedQueries = await this.processQueries(queries, collection, {
-      forPermission,
-    });
+    const processedQueries = await this.processQueries(
+      ctx,
+      queries,
+      collection,
+      { forPermission },
+    );
 
     if (!processedQueries.authorized) {
       return [];
     }
 
-    const rows = await this.adapter.find(collectionId, processedQueries);
+    const rows = await this.adapter.find(ctx, collectionId, processedQueries);
     const result = this.processFindResults(rows, processedQueries);
 
     const castedResult = result.map((doc) => this.cast(collection, doc));
@@ -2838,20 +2947,12 @@ export class Database extends Cache {
 
   /**
    * find a single document.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public findOne<C extends string & keyof Entities>(
-    collectionId: C,
-    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
-  ): Promise<Doc<Entities[C]>>;
-  public findOne<C extends string>(
-    collectionId: C,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-  ): Promise<Doc<Partial<IEntity> & Record<string, any>>>;
-  public findOne<D extends Record<string, any>>(
-    collectionId: string,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-  ): Promise<Doc<Partial<IEntity>>>;
-  public async findOne<C>(
+  private async findOne(
+    ctx: AuthContext,
     collectionId: string,
     query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
   ): Promise<Doc> {
@@ -2862,7 +2963,7 @@ export class Database extends Cache {
       queries.push(...(query ?? []));
     }
 
-    const result = await this.silent(() => this.find(collectionId, queries));
+    const result = await this.silent(() => this.find(ctx, collectionId, queries));
     this.trigger(EventsEnum.DocumentFind, result[0]);
 
     if (!result[0]) {
@@ -2874,18 +2975,12 @@ export class Database extends Cache {
 
   /**
    * Count documents in a collection.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public count<C extends string & keyof Entities>(
-    collectionId: C,
-    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
-    max?: number,
-  ): Promise<number>;
-  public count<C extends string>(
-    collectionId: C,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-    max?: number,
-  ): Promise<number>;
-  public async count(
+  private async count(
+    ctx: AuthContext,
     collectionId: string,
     query: ((builder: QueryBuilder) => QueryBuilder) | Query[] = [],
     max?: number,
@@ -2897,22 +2992,27 @@ export class Database extends Cache {
     const queries: Query[] =
       typeof query === "function" ? query(new QueryBuilder()).build() : query;
 
-    const authorization = new Authorization(PermissionEnum.Read);
-    let skipAuth = false;
-    if (authorization.$valid(collection.getRead())) {
-      skipAuth = true;
-    }
+    // A collection-level read grant sees every document, so the aggregate
+    // runs privileged (SYSTEM_CONTEXT skips the adapter's per-document
+    // `_perms` filter); otherwise the ctx filters rows per document.
+    const skipAuth = authorize(ctx, collection.getRead(), PermissionEnum.Read);
 
-    const processedQueries = await this.processQueries(queries, collection, {
-      forPermission: PermissionEnum.Read,
-      overrideValidators: [MethodType.Filter],
-    });
+    const processedQueries = await this.processQueries(
+      ctx,
+      queries,
+      collection,
+      {
+        forPermission: PermissionEnum.Read,
+        overrideValidators: [MethodType.Filter],
+      },
+    );
 
-    const getCount = () =>
-      this.adapter.count(collection.getId(), processedQueries.filters, max);
-    const count = skipAuth
-      ? await Authorization.skip(getCount)
-      : await getCount();
+    const count = await this.adapter.count(
+      skipAuth ? SYSTEM_CONTEXT : ctx,
+      collection.getId(),
+      processedQueries.filters,
+      max,
+    );
 
     this.trigger(EventsEnum.DocumentCount, count);
 
@@ -2921,20 +3021,12 @@ export class Database extends Cache {
 
   /**
    * Sum an attribute for all documents in a collection.
+   *
+   * Internal ctx-first implementation; exposed publicly only through
+   * {@link Session}.
    */
-  public sum<C extends string & keyof Entities>(
-    collectionId: C,
-    attribute: keyof Entities[C] & string,
-    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
-    max?: number,
-  ): Promise<number>;
-  public sum<C extends string>(
-    collectionId: C,
-    attribute: string,
-    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
-    max?: number,
-  ): Promise<number>;
-  public async sum(
+  private async sum(
+    ctx: AuthContext,
     collectionId: string,
     attribute: string,
     query: ((builder: QueryBuilder) => QueryBuilder) | Query[] = [],
@@ -2948,26 +3040,29 @@ export class Database extends Cache {
         ? query(new QueryBuilder()).build()
         : (query ?? []);
 
-    const processedQueries = await this.processQueries(queries, collection, {
-      forPermission: PermissionEnum.Read,
-      overrideValidators: [MethodType.Filter],
-    });
+    const processedQueries = await this.processQueries(
+      ctx,
+      queries,
+      collection,
+      {
+        forPermission: PermissionEnum.Read,
+        overrideValidators: [MethodType.Filter],
+      },
+    );
 
     // Mirror find()/count(): a collection-level read grant sees every
     // document, so the aggregate must skip the per-document `_perms` filter.
     // Without this, sum() under-counts relative to find() for privileged
     // callers on documentSecurity collections.
-    const authorization = new Authorization(PermissionEnum.Read);
-    const skipAuth = authorization.$valid(collection.getRead());
+    const skipAuth = authorize(ctx, collection.getRead(), PermissionEnum.Read);
 
-    const getSum = () =>
-      this.adapter.sum(
-        collection.getId(),
-        attribute,
-        processedQueries.filters,
-        max,
-      );
-    const sum = skipAuth ? await Authorization.skip(getSum) : await getSum();
+    const sum = await this.adapter.sum(
+      skipAuth ? SYSTEM_CONTEXT : ctx,
+      collection.getId(),
+      attribute,
+      processedQueries.filters,
+      max,
+    );
 
     this.trigger(EventsEnum.DocumentSum, sum);
 
@@ -2976,8 +3071,11 @@ export class Database extends Cache {
 
   /**
    * Processes queries for a collection, validating and authorizing them.
+   *
+   * Internal ctx-first implementation; only reachable within this module.
    */
-  async processQueries(
+  private async processQueries(
+    ctx: AuthContext,
     queries: ((builder: QueryBuilder) => QueryBuilder) | Query[],
     collection: Doc<Collection>,
     {
@@ -3002,21 +3100,21 @@ export class Database extends Cache {
     let skipAuth = false;
     const validators = overrideValidators ?? allowedValidators;
 
-    const authorizationValidator = new Authorization(forPermission);
-    skipAuth = authorizationValidator.$valid(
-      collection.getPermissionsByType(forPermission),
-    );
+    const permissions = collection.getPermissionsByType(forPermission);
+    skipAuth = authorize(ctx, permissions, forPermission);
     if (
       collection.getId() !== Database.METADATA &&
       !skipAuth &&
       !collection.get("documentSecurity", false)
     ) {
       if (!metadata.populated) {
-        throw new AuthorizationException(authorizationValidator.$description);
+        throw new AuthorizationException(
+          authorizationError(forPermission, permissions, ctx.roles),
+        );
       }
       if (throwOnUnAuthorization && metadata.populated) {
         throw new AuthorizationException(
-          `Collection '${collection.getId()}' not authorized for '${forPermission}'. ${authorizationValidator.$description}`,
+          `Collection '${collection.getId()}' not authorized for '${forPermission}'. ${authorizationError(forPermission, permissions, ctx.roles)}`,
         );
       }
       authorized = false;
@@ -3082,8 +3180,14 @@ export class Database extends Cache {
 
     if (cursor) {
       if (typeof cursor === "string") {
+        // Engine-internal cursor resolution: the surrounding operation has
+        // already been authorized against ctx.
         cursor = (await this.silent(() =>
-          this.getDocument(collection.getId(), cursor as unknown as string),
+          this.getDocument(
+            SYSTEM_CONTEXT,
+            collection.getId(),
+            cursor as unknown as string,
+          ),
         )) as Doc<IEntity>;
       }
       if (cursor.empty()) {
@@ -3174,6 +3278,7 @@ export class Database extends Cache {
       }
 
       const processedQueries = await this.processQueries(
+        ctx,
         values,
         relatedCollection,
         {
@@ -3231,4 +3336,568 @@ export type PopulateQuery = Omit<
 export type DatabaseOptions = {
   tenant?: number;
   filters?: Filters;
+  logger?: LoggerOptions | Logger;
 };
+
+/**
+ * The ctx-first document-plane surface of a {@link Database} instance.
+ *
+ * Implemented by the module-private `documentPlane` symbol member on
+ * Database and consumed exclusively by {@link Session}. Every operation
+ * receives the session's immutable AuthContext as its first parameter.
+ */
+export interface DocumentPlane {
+  find(
+    ctx: AuthContext,
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    forPermission?: PermissionEnum,
+  ): Promise<Doc<any>[]>;
+  findOne(
+    ctx: AuthContext,
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+  ): Promise<Doc>;
+  getDocument(
+    ctx: AuthContext,
+    collectionId: string,
+    id: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    forUpdate?: boolean,
+  ): Promise<any>;
+  createDocument(
+    ctx: AuthContext,
+    collectionId: string,
+    document: Doc<Record<string, any>> | Record<string, any>,
+  ): Promise<Doc<any>>;
+  createDocuments<D extends Doc<Record<string, any>>>(
+    ctx: AuthContext,
+    collectionId: string,
+    documents: D[],
+  ): Promise<Doc[]>;
+  updateDocument(
+    ctx: AuthContext,
+    collectionId: string,
+    id: string,
+    document: Doc<Record<string, any>> | Record<string, any>,
+  ): Promise<Doc<any>>;
+  updateDocuments(
+    ctx: AuthContext,
+    collectionId: string,
+    updates: Doc<Partial<IEntity> & Record<string, any>>,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number>;
+  deleteDocument(
+    ctx: AuthContext,
+    collectionId: string,
+    id: string,
+  ): Promise<boolean>;
+  deleteDocuments(
+    ctx: AuthContext,
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+  ): Promise<string[]>;
+  deleteDocumentsBatch(
+    ctx: AuthContext,
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<any>, old: Doc<any>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number>;
+  createOrUpdateDocuments(
+    ctx: AuthContext,
+    collectionId: string,
+    documents: Doc<Record<string, any>>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+  ): Promise<number>;
+  createOrUpdateDocumentsWithIncrease(
+    ctx: AuthContext,
+    collectionId: string,
+    attribute: string,
+    documents: Doc<Record<string, any>>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+  ): Promise<number>;
+  increaseDocumentAttribute(
+    ctx: AuthContext,
+    collectionId: string,
+    id: string,
+    attribute: string,
+    value?: number,
+    max?: number,
+  ): Promise<Doc<any>>;
+  decreaseDocumentAttribute(
+    ctx: AuthContext,
+    collectionId: string,
+    id: string,
+    attribute: string,
+    value?: number,
+    min?: number,
+  ): Promise<Doc<any>>;
+  count(
+    ctx: AuthContext,
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number>;
+  sum(
+    ctx: AuthContext,
+    collectionId: string,
+    attribute: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number>;
+  purgeCachedDocument(collectionId: string, doc: Doc<any> | string): Promise<void>;
+  purgeCachedCollection(collection: Doc<Collection> | string): Promise<void>;
+  withTransaction<T>(
+    ctx: AuthContext,
+    callback: (session: Session) => Promise<T>,
+  ): Promise<T>;
+}
+
+/**
+ * A scoped, document-plane view of a {@link Database} instance carrying an
+ * immutable {@link AuthContext}.
+ *
+ * Sessions share the owning Database's adapter, cache and instance state —
+ * creating one never opens a new pool or connection. They expose ONLY
+ * document-plane operations; schema/admin operations remain on Database.
+ * Authorization decisions are made against `session.ctx`, replacing the
+ * removed static/global `Authorization` state.
+ *
+ * Obtain sessions via `db.for(...roles)` (scoped) or `db.system()`
+ * (privileged, bypasses all checks).
+ */
+export class Session {
+  constructor(
+    private readonly database: Database,
+    public readonly ctx: AuthContext,
+  ) {}
+
+  find<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+    forPermission?: PermissionEnum,
+  ): Promise<Doc<Entities[C]>[]>;
+  find<C extends string>(
+    collectionId: C,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    forPermission?: PermissionEnum,
+  ): Promise<Doc<Partial<IEntity> & Record<string, any>>[]>;
+  find<D extends Record<string, any>>(
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    forPermission?: PermissionEnum,
+  ): Promise<Doc<Partial<IEntity> & D>[]>;
+  find(
+    collectionId: string,
+    query: ((builder: QueryBuilder) => QueryBuilder) | Query[] = [],
+    forPermission: PermissionEnum = PermissionEnum.Read,
+  ): Promise<Doc<any>[]> {
+    return this.database[documentPlane].find(
+      this.ctx,
+      collectionId,
+      query,
+      forPermission,
+    );
+  }
+
+  findOne<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+  ): Promise<Doc<Entities[C]>>;
+  findOne<C extends string>(
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+  ): Promise<Doc<Partial<IEntity> & Record<string, any>>>;
+  findOne(
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+  ): Promise<Doc> {
+    return this.database[documentPlane].findOne(this.ctx, collectionId, query);
+  }
+
+  getDocument<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+    forUpdate?: boolean,
+  ): Promise<Doc<Entities[C]>>;
+  getDocument<D extends Record<string, any>>(
+    collectionId: string,
+    id: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    forUpdate?: boolean,
+  ): Promise<Doc<Partial<IEntity> & D>>;
+  getDocument(
+    collectionId: string,
+    id: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    forUpdate?: boolean,
+  ): Promise<any> {
+    return this.database[documentPlane].getDocument(
+      this.ctx,
+      collectionId,
+      id,
+      query,
+      forUpdate,
+    );
+  }
+
+  createDocument<C extends keyof Entities>(
+    collectionId: C,
+    document: Doc<Entities[C]> | Entities[C],
+  ): Promise<Doc<Entities[C]>>;
+  createDocument<D extends Record<string, any>>(
+    collectionId: string,
+    document: Doc<D> | D,
+  ): Promise<Doc<D>>;
+  createDocument(
+    collectionId: string,
+    document: Doc<Partial<IEntity>> | Partial<IEntity>,
+  ): Promise<Doc<Partial<IEntity>>> {
+    return this.database[documentPlane].createDocument(
+      this.ctx,
+      collectionId,
+      document,
+    );
+  }
+
+  createDocuments<C extends string & keyof Entities>(
+    collectionId: C,
+    documents: Doc<Entities[C]>[] | Entities[C][],
+  ): Promise<Doc<Entities[C]>[]>;
+  createDocuments<D extends Doc<Record<string, any>>>(
+    collectionId: string,
+    documents: D[],
+  ): Promise<Doc[]>;
+  createDocuments(
+    collectionId: string,
+    documents: Doc<any>[] | Record<string, any>[],
+  ): Promise<Doc[]> {
+    return this.database[documentPlane].createDocuments(
+      this.ctx,
+      collectionId,
+      documents as Doc<any>[],
+    );
+  }
+
+  updateDocument<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+    document: Entities[C] | Doc<Entities[C]>,
+  ): Promise<Doc<Entities[C]>>;
+  updateDocument<D extends Doc<Record<string, any>>>(
+    collectionId: string,
+    id: string,
+    document: D | Doc<D>,
+  ): Promise<D>;
+  updateDocument(
+    collectionId: string,
+    id: string,
+    document: Doc<Record<string, any>> | Record<string, any>,
+  ): Promise<Doc<any>> {
+    return this.database[documentPlane].updateDocument(
+      this.ctx,
+      collectionId,
+      id,
+      document,
+    );
+  }
+
+  updateDocuments<C extends string & keyof Entities>(
+    collectionId: C,
+    updates: Doc<Entities[C]>,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number>;
+  updateDocuments(
+    collectionId: string,
+    updates: Doc<any>,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number>;
+  updateDocuments(
+    collectionId: string,
+    updates: Doc<any>,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number> {
+    return this.database[documentPlane].updateDocuments(
+      this.ctx,
+      collectionId,
+      updates,
+      query,
+      batchSize,
+      onNext,
+      onError,
+    );
+  }
+
+  deleteDocument(collectionId: string, id: string): Promise<boolean> {
+    return this.database[documentPlane].deleteDocument(
+      this.ctx,
+      collectionId,
+      id,
+    );
+  }
+
+  deleteDocuments<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: Query[] | ((qb: QueryBuilder<C>) => QueryBuilder<C>),
+  ): Promise<string[]>;
+  deleteDocuments(
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+  ): Promise<string[]>;
+  deleteDocuments(
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+  ): Promise<string[]> {
+    return this.database[documentPlane].deleteDocuments(
+      this.ctx,
+      collectionId,
+      query,
+    );
+  }
+
+  deleteDocumentsBatch<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (
+      doc: Doc<Entities[C]>,
+      old: Doc<Entities[C]>,
+    ) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number>;
+  deleteDocumentsBatch(
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<any>, old: Doc<any>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number>;
+  deleteDocumentsBatch(
+    collectionId: string,
+    query?: Query[] | ((qb: QueryBuilder) => QueryBuilder),
+    batchSize?: number,
+    onNext?: (doc: Doc<any>, old: Doc<any>) => void | Promise<void>,
+    onError?: (error: Error) => void | Promise<void>,
+  ): Promise<number> {
+    return this.database[documentPlane].deleteDocumentsBatch(
+      this.ctx,
+      collectionId,
+      query,
+      batchSize,
+      onNext,
+      onError,
+    );
+  }
+
+  createOrUpdateDocuments<C extends string & keyof Entities>(
+    collectionId: C,
+    documents: Doc<Entities[C]>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
+  ): Promise<number>;
+  createOrUpdateDocuments(
+    collectionId: string,
+    documents: Doc<any>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+  ): Promise<number>;
+  createOrUpdateDocuments(
+    collectionId: string,
+    documents: Doc<any>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+  ): Promise<number> {
+    return this.database[documentPlane].createOrUpdateDocuments(
+      this.ctx,
+      collectionId,
+      documents,
+      batchSize,
+      onNext,
+    );
+  }
+
+  createOrUpdateDocumentsWithIncrease<C extends string & keyof Entities>(
+    collectionId: C,
+    attribute: keyof Entities[C] & string,
+    documents: Doc<Entities[C]>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<Entities[C]>) => void | Promise<void>,
+  ): Promise<number>;
+  createOrUpdateDocumentsWithIncrease(
+    collectionId: string,
+    attribute: string,
+    documents: Doc<any>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+  ): Promise<number>;
+  createOrUpdateDocumentsWithIncrease(
+    collectionId: string,
+    attribute: string,
+    documents: Doc<any>[],
+    batchSize?: number,
+    onNext?: (doc: Doc<any>) => void | Promise<void>,
+  ): Promise<number> {
+    return this.database[documentPlane].createOrUpdateDocumentsWithIncrease(
+      this.ctx,
+      collectionId,
+      attribute,
+      documents,
+      batchSize,
+      onNext,
+    );
+  }
+
+  increaseDocumentAttribute<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+    attribute: keyof Entities[C] & string,
+    value?: number,
+    max?: number,
+  ): Promise<Doc<Entities[C]>>;
+  increaseDocumentAttribute(
+    collectionId: string,
+    id: string,
+    attribute: string,
+    value?: number,
+    max?: number,
+  ): Promise<Doc<any>>;
+  increaseDocumentAttribute(
+    collectionId: string,
+    id: string,
+    attribute: string,
+    value?: number,
+    max?: number,
+  ): Promise<Doc<any>> {
+    return this.database[documentPlane].increaseDocumentAttribute(
+      this.ctx,
+      collectionId,
+      id,
+      attribute,
+      value,
+      max,
+    );
+  }
+
+  decreaseDocumentAttribute<C extends string & keyof Entities>(
+    collectionId: C,
+    id: string,
+    attribute: keyof Entities[C] & string,
+    value?: number,
+    min?: number,
+  ): Promise<Doc<Entities[C]>>;
+  decreaseDocumentAttribute(
+    collectionId: string,
+    id: string,
+    attribute: string,
+    value?: number,
+    min?: number,
+  ): Promise<Doc<any>>;
+  decreaseDocumentAttribute(
+    collectionId: string,
+    id: string,
+    attribute: string,
+    value?: number,
+    min?: number,
+  ): Promise<Doc<any>> {
+    return this.database[documentPlane].decreaseDocumentAttribute(
+      this.ctx,
+      collectionId,
+      id,
+      attribute,
+      value,
+      min,
+    );
+  }
+
+  count<C extends string & keyof Entities>(
+    collectionId: C,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+    max?: number,
+  ): Promise<number>;
+  count(
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number>;
+  count(
+    collectionId: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number> {
+    return this.database[documentPlane].count(
+      this.ctx,
+      collectionId,
+      query,
+      max,
+    );
+  }
+
+  sum<C extends string & keyof Entities>(
+    collectionId: C,
+    attribute: keyof Entities[C] & string,
+    query?: ((builder: QueryBuilder<C>) => QueryBuilder<C>) | Query[],
+    max?: number,
+  ): Promise<number>;
+  sum(
+    collectionId: string,
+    attribute: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number>;
+  sum(
+    collectionId: string,
+    attribute: string,
+    query?: ((builder: QueryBuilder) => QueryBuilder) | Query[],
+    max?: number,
+  ): Promise<number> {
+    return this.database[documentPlane].sum(
+      this.ctx,
+      collectionId,
+      attribute,
+      query,
+      max,
+    );
+  }
+
+  /**
+   * Purges all cached variants of a document. Cache maintenance only —
+   * no authorization is involved.
+   */
+  purgeCachedDocument(collectionId: string, doc: Doc<any> | string): Promise<void> {
+    return this.database[documentPlane].purgeCachedDocument(collectionId, doc);
+  }
+
+  /**
+   * Purges every cached entry tagged for a collection. Cache maintenance
+   * only — no authorization is involved.
+   */
+  purgeCachedCollection(collection: Doc<Collection> | string): Promise<void> {
+    return this.database[documentPlane].purgeCachedCollection(collection);
+  }
+
+  /**
+   * Runs the callback inside a transaction. The callback receives a
+   * transactional session bound to the SAME AuthContext, so nested
+   * document operations keep their authorization scope.
+   */
+  withTransaction<T>(callback: (txSession: Session) => Promise<T>): Promise<T> {
+    return this.database[documentPlane].withTransaction(this.ctx, callback);
+  }
+}

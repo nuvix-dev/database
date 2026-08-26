@@ -12,6 +12,7 @@ import {
 import { CreateCollectionOptions } from "./interface.js";
 import { DatabaseException } from "@errors/base.js";
 import { Database, ProcessedQuery } from "@core/database.js";
+import { AuthContext } from "@core/auth.js";
 import { Doc } from "@core/doc.js";
 import { Attribute } from "@validators/schema.js";
 import {
@@ -24,15 +25,24 @@ import {
 export class Adapter extends BaseAdapter {
   protected client: PostgresClient | Transaction;
 
-  constructor(
-    client:
-      SQL | string | Record<string, unknown> | PostgresClient | Transaction,
-  ) {
+  // Accepts a connection string, a pre-configured Bun `SQL` instance, or an
+  // existing client handle (`PostgresClient`/`Transaction`) when building a
+  // transaction-scoped adapter. Plain option objects are not supported —
+  // construct a `SQL` client yourself when pool tuning is needed.
+  //
+  // Client handles are detected via their `__type` discriminator (the same
+  // mechanism BaseAdapter.$client relies on) rather than `instanceof`,
+  // because probing foreign objects against Bun's native `SQL` class throws
+  // "instanceof called on an object with an invalid prototype property".
+  constructor(client: SQL | string | PostgresClient | Transaction) {
     super();
     this.client =
-      client instanceof PostgresClient || client instanceof Transaction
-        ? client
-        : new PostgresClient(client);
+      client !== null &&
+      typeof client === "object" &&
+      ((client as { __type?: string }).__type === "postgres" ||
+        (client as { __type?: string }).__type === "transaction")
+        ? (client as PostgresClient | Transaction)
+        : new PostgresClient(client as SQL | string);
   }
 
   async create(name: string): Promise<void> {
@@ -967,6 +977,7 @@ export class Adapter extends BaseAdapter {
    * Returns the created document with its sequence ID set.
    */
   public async createDocument<D extends Doc>(
+    ctx: AuthContext,
     collection: string,
     document: D,
   ): Promise<D> {
@@ -1056,6 +1067,7 @@ export class Adapter extends BaseAdapter {
    * Create multiple documents in a collection.
    */
   public async createDocuments<D extends Doc>(
+    ctx: AuthContext,
     collection: string,
     documents: D[],
   ): Promise<D[]> {
@@ -1164,6 +1176,7 @@ export class Adapter extends BaseAdapter {
    * Updates an existing document in the specified collection.
    */
   public async updateDocument<D extends Doc>(
+    ctx: AuthContext,
     collection: string,
     document: D,
     skipPermissions: boolean = false,
@@ -1230,6 +1243,7 @@ export class Adapter extends BaseAdapter {
    * Returns the number of affected rows.`
    */
   async updateDocuments(
+    ctx: AuthContext,
     collection: string,
     updates: Doc<any>,
     documents: Doc[],
@@ -1304,7 +1318,11 @@ export class Adapter extends BaseAdapter {
    * Deletes multiple documents from a collection.
    * Returns the number of affected rows.
    */
-  public async deleteDocuments(collectionId: string, query: ProcessedQuery) {
+  public async deleteDocuments(
+    ctx: AuthContext,
+    collectionId: string,
+    query: ProcessedQuery,
+  ) {
     const name = this.sanitize(collectionId);
     const { populateQueries = [], filters, collection, ...options } = query;
     const mainTableAlias = "main";
@@ -1320,6 +1338,7 @@ export class Adapter extends BaseAdapter {
       ...options,
       selections: [],
       forPermission: PermissionEnum.Delete,
+      ctx,
     });
 
     const finalWhereClause =
@@ -1371,6 +1390,7 @@ export class Adapter extends BaseAdapter {
    * Returns the number of affected rows.
    */
   public async deleteDocumentsBySequences(
+    ctx: AuthContext,
     collection: string,
     sequences: number[],
     permissionIds: string[],
@@ -1430,6 +1450,7 @@ export class Adapter extends BaseAdapter {
    * Handles incremental updates for a specific attribute and manages permissions.
    */
   public async createOrUpdateDocuments(
+    ctx: AuthContext,
     collection: string,
     attribute: string,
     changes: Array<{ old: Doc; new: Doc }>,
@@ -1608,6 +1629,7 @@ export class Adapter extends BaseAdapter {
    * Finds documents in a collection based on a processed query.
    */
   public async find(
+    ctx: AuthContext,
     collection: string,
     query: ProcessedQuery,
     {
@@ -1617,7 +1639,7 @@ export class Adapter extends BaseAdapter {
       forPermission?: PermissionEnum;
     } = {},
   ): Promise<Record<string, any>[]> {
-    const sqlResult = this.buildSql(query, { ...options, forPermission });
+    const sqlResult = this.buildSql(query, { ...options, forPermission, ctx });
 
     try {
       const { rows } = await this.client.query(sqlResult.sql, sqlResult.params);
@@ -1630,10 +1652,20 @@ export class Adapter extends BaseAdapter {
     }
   }
 
-  protected createTransactionAdapter(client: any): this {
+  protected createTransactionAdapter(client: PostgresClient | Transaction): this {
     const adapter = new (this.constructor as any)(client) as this;
-    adapter._meta = this._meta;
+
+    // Own copies of mutable configuration so concurrent transactions cannot
+    // clobber each other's metadata or SQL transformations.
+    adapter._meta = { ...this._meta, metadata: { ...this._meta.metadata } };
     adapter.$logger = this.$logger;
+    adapter.transformations = Object.fromEntries(
+      Object.entries(this.transformations).map(([event, list]) => [
+        event,
+        [...(list ?? [])],
+      ]),
+    ) as typeof adapter.transformations;
+
     return adapter;
   }
 }

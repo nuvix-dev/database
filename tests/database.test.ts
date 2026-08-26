@@ -21,6 +21,9 @@ const ns = `db_test_${Date.now()}`;
 
 describe("Database", () => {
   const db = createTestDb({ namespace: ns });
+  // Document-plane operations moved behind ctx-first sessions; schema/admin
+  // operations remain directly on the Database instance.
+  const session = db.system();
   const testCollections: string[] = [];
 
   beforeAll(async () => {
@@ -867,7 +870,7 @@ describe("Database", () => {
           },
         };
 
-        const document = await db.createDocument(
+        const document = await session.createDocument(
           testCollectionId,
           new Doc(randomData),
         );
@@ -897,7 +900,7 @@ describe("Database", () => {
             },
           };
 
-          const document = await db.createDocument(
+          const document = await session.createDocument(
             testCollectionId,
             new Doc(randomData),
           );
@@ -919,7 +922,7 @@ describe("Database", () => {
           age: 25,
         };
 
-        const document = await db.createDocument(
+        const document = await session.createDocument(
           testCollectionId,
           new Doc(randomData),
         );
@@ -927,7 +930,7 @@ describe("Database", () => {
       });
 
       it("retrieves document by ID", async () => {
-        const document = await db.getDocument(testCollectionId, testDocumentId);
+        const document = await session.getDocument(testCollectionId, testDocumentId);
 
         expect(document.getId()).toBe(testDocumentId);
         expect(document.get("name")).toContain("TestUser_");
@@ -935,7 +938,7 @@ describe("Database", () => {
       });
 
       it("returns empty doc for non-existent document", async () => {
-        const document = await db.getDocument(
+        const document = await session.getDocument(
           testCollectionId,
           "non_existent_id",
         );
@@ -953,7 +956,7 @@ describe("Database", () => {
           age: 30,
         };
 
-        const document = await db.createDocument(
+        const document = await session.createDocument(
           testCollectionId,
           new Doc(randomData),
         );
@@ -967,7 +970,7 @@ describe("Database", () => {
           metadata: { updated: true },
         });
 
-        const updatedDocument = await db.updateDocument(
+        const updatedDocument = await session.updateDocument(
           testCollectionId,
           testDocumentId,
           updateData,
@@ -1000,22 +1003,22 @@ describe("Database", () => {
             },
           };
 
-          await db.createDocument(testCollectionId, new Doc(randomData));
+          await session.createDocument(testCollectionId, new Doc(randomData));
         }
       });
 
       it("finds all documents", async () => {
-        const documents = await db.find(testCollectionId);
+        const documents = await session.find(testCollectionId);
         expect(documents.length).toBeGreaterThan(0);
       });
 
       it("finds documents with limit", async () => {
-        const documents = await db.find(testCollectionId, [Query.limit(10)]);
+        const documents = await session.find(testCollectionId, [Query.limit(10)]);
         expect(documents.length).toBeLessThanOrEqual(10);
       });
 
       it("finds documents with filters", async () => {
-        const documents = await db.find(testCollectionId, [
+        const documents = await session.find(testCollectionId, [
           Query.equal("active", [true]),
           Query.limit(20),
         ]);
@@ -1025,7 +1028,7 @@ describe("Database", () => {
       });
 
       it("finds documents with complex queries", async () => {
-        const documents = await db.find(testCollectionId, [
+        const documents = await session.find(testCollectionId, [
           Query.greaterThan("age", 50),
           Query.equal("active", [true]),
           Query.orderAsc("age"),
@@ -1043,7 +1046,7 @@ describe("Database", () => {
 
     describe("findOne", () => {
       beforeEach(async () => {
-        await db.createDocument(
+        await session.createDocument(
           testCollectionId,
           new Doc({
             name: "UniqueUser",
@@ -1055,7 +1058,7 @@ describe("Database", () => {
       });
 
       it("finds single document", async () => {
-        const document = await db.findOne(testCollectionId, [
+        const document = await session.findOne(testCollectionId, [
           Query.equal("name", ["UniqueUser"]),
         ]);
 
@@ -1065,7 +1068,7 @@ describe("Database", () => {
       });
 
       it("returns empty doc when no match found", async () => {
-        const document = await db.findOne(testCollectionId, [
+        const document = await session.findOne(testCollectionId, [
           Query.equal("name", ["NonExistentUser"]),
         ]);
 
@@ -1099,7 +1102,7 @@ describe("Database", () => {
 
       // Add some documents
       for (let i = 0; i < 10; i++) {
-        await db.createDocument(
+        await session.createDocument(
           collectionId,
           new Doc({
             data: `Sample data ${i}`,

@@ -14,12 +14,16 @@ import { Attribute } from "@validators/schema.js";
 
 describe("Cache Functionality", () => {
   let db: Database;
+  // Document-plane ops moved behind sessions; caching is mechanics, so this
+  // suite uses a privileged system session.
+  let system: ReturnType<Database["system"]>;
   let testCollectionId: string;
 
   const schema = new Date().getTime().toString();
 
   beforeAll(async () => {
     db = createTestDb({ namespace: `cache_test_${schema}` });
+    system = db.system();
     db.setMeta({ schema });
     await db.create();
   });
@@ -56,13 +60,13 @@ describe("Cache Functionality", () => {
     test("should cache document on first read", async () => {
       // Create a document
       const docData = { name: "Test Document", value: 42 };
-      const createdDoc = await db.createDocument(
+      const createdDoc = await system.createDocument(
         testCollectionId,
         new Doc(docData),
       );
 
       // First read - should fetch from database and cache
-      const firstRead = await db.getDocument(
+      const firstRead = await system.getDocument(
         testCollectionId,
         createdDoc.getId(),
       );
@@ -71,7 +75,7 @@ describe("Cache Functionality", () => {
       expect(firstRead.get("value")).toBe(42);
 
       // Second read - should come from cache
-      const secondRead = await db.getDocument(
+      const secondRead = await system.getDocument(
         testCollectionId,
         createdDoc.getId(),
       );
@@ -83,13 +87,13 @@ describe("Cache Functionality", () => {
     test("should return cached document even if database is updated", async () => {
       // Create a document
       const docData = { name: "Original", value: 100 };
-      const createdDoc = await db.createDocument(
+      const createdDoc = await system.createDocument(
         testCollectionId,
         new Doc(docData),
       );
 
       // Read to cache it
-      const cachedDoc = await db.getDocument(
+      const cachedDoc = await system.getDocument(
         testCollectionId,
         createdDoc.getId(),
       );
@@ -97,10 +101,10 @@ describe("Cache Functionality", () => {
 
       // Update document directly in database (bypassing cache)
       const updatedDoc = new Doc({ ...cachedDoc.toObject(), value: 200 });
-      await db.updateDocument(testCollectionId, cachedDoc.getId(), updatedDoc);
+      await system.updateDocument(testCollectionId, cachedDoc.getId(), updatedDoc);
 
       // Read again - should still return cached version
-      const secondRead = await db.getDocument(
+      const secondRead = await system.getDocument(
         testCollectionId,
         cachedDoc.getId(),
       );
@@ -112,13 +116,13 @@ describe("Cache Functionality", () => {
     test("should purge cached document", async () => {
       // Create and cache a document
       const docData = { name: "Purge Test", value: 300 };
-      const createdDoc = await db.createDocument(
+      const createdDoc = await system.createDocument(
         testCollectionId,
         new Doc(docData),
       );
 
       // Read to cache
-      const cachedDoc = await db.getDocument(
+      const cachedDoc = await system.getDocument(
         testCollectionId,
         createdDoc.getId(),
       );
@@ -126,13 +130,13 @@ describe("Cache Functionality", () => {
 
       // Update document
       const updatedDoc = new Doc({ ...cachedDoc.toObject(), value: 400 });
-      await db.updateDocument(testCollectionId, cachedDoc.getId(), updatedDoc);
+      await system.updateDocument(testCollectionId, cachedDoc.getId(), updatedDoc);
 
       // Purge document from cache
-      await db.purgeCachedDocument(testCollectionId, cachedDoc.getId());
+      await system.purgeCachedDocument(testCollectionId, cachedDoc.getId());
 
       // Read again - should get updated version
-      const freshRead = await db.getDocument(
+      const freshRead = await system.getDocument(
         testCollectionId,
         cachedDoc.getId(),
       );
@@ -141,40 +145,40 @@ describe("Cache Functionality", () => {
 
     test("should purge cached collection", async () => {
       // Create multiple documents
-      const doc1 = await db.createDocument(
+      const doc1 = await system.createDocument(
         testCollectionId,
         new Doc({ name: "Doc1", value: 1 }),
       );
-      const doc2 = await db.createDocument(
+      const doc2 = await system.createDocument(
         testCollectionId,
         new Doc({ name: "Doc2", value: 2 }),
       );
 
       // Read to cache
-      const cached1 = await db.getDocument(testCollectionId, doc1.getId());
-      const cached2 = await db.getDocument(testCollectionId, doc2.getId());
+      const cached1 = await system.getDocument(testCollectionId, doc1.getId());
+      const cached2 = await system.getDocument(testCollectionId, doc2.getId());
 
       expect(cached1.get("value")).toBe(1);
       expect(cached2.get("value")).toBe(2);
 
       // Update documents
-      await db.updateDocument(
+      await system.updateDocument(
         testCollectionId,
         doc1.getId(),
         new Doc({ ...cached1.toObject(), value: 11 }),
       );
-      await db.updateDocument(
+      await system.updateDocument(
         testCollectionId,
         doc2.getId(),
         new Doc({ ...cached2.toObject(), value: 22 }),
       );
 
       // Purge entire collection from cache
-      await db.purgeCachedCollection(testCollectionId);
+      await system.purgeCachedCollection(testCollectionId);
 
       // Read again - should get updated versions
-      const fresh1 = await db.getDocument(testCollectionId, doc1.getId());
-      const fresh2 = await db.getDocument(testCollectionId, doc2.getId());
+      const fresh1 = await system.getDocument(testCollectionId, doc1.getId());
+      const fresh2 = await system.getDocument(testCollectionId, doc2.getId());
 
       expect(fresh1.get("value")).toBe(11);
       expect(fresh2.get("value")).toBe(22);
@@ -184,7 +188,7 @@ describe("Cache Functionality", () => {
   describe("Cache Keys", () => {
     test("should generate correct cache keys", async () => {
       const docData = { name: "Key Test", value: 500 };
-      const createdDoc = await db.createDocument(
+      const createdDoc = await system.createDocument(
         testCollectionId,
         new Doc(docData),
       );

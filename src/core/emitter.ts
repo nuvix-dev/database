@@ -1,9 +1,54 @@
 import { EventEmitter } from "node:events";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { EventsEnum } from "./enums.js";
 import { Logger } from "@utils/logger.js";
 import { Doc } from "./doc.js";
 import { Attribute, Collection, Index } from "@validators/schema.js";
 import { IEntity } from "types.js";
+
+/**
+ * The silence set threaded through the emit chain.
+ * - `null` silences EVERY listener for the current scope.
+ * - An empty set silences nothing (the default for emissions outside any
+ *   silent() scope).
+ * - A non-empty set silences exactly the listener names it contains.
+ *
+ * Instances are always treated as immutable (frozen at creation), so a scope
+ * can never mutate another scope's view.
+ */
+type SilencedListeners = ReadonlySet<string> | null;
+
+/**
+ * Shared empty set meaning "nothing is silenced". Frozen so it can never be
+ * accidentally mutated into a global suppression.
+ */
+const NO_SILENCED_LISTENERS: ReadonlySet<string> = Object.freeze(
+  new Set<string>(),
+);
+
+/**
+ * Per-async-execution silence storage.
+ *
+ * Each silent() call installs its own immutable store for the duration of its
+ * callback's async chain. Emissions resolve their scope at trigger time from
+ * the CURRENT async execution, which guarantees:
+ * - concurrent emissions outside the silenced chain are never swallowed;
+ * - two overlapping silent() scopes each carry their own set and cannot
+ *   silence or un-silence each other;
+ * - no shared mutable state survives an await boundary (stores are frozen and
+ *   never written after creation).
+ */
+const silenceStorage = new AsyncLocalStorage<SilencedListeners>();
+
+/**
+ * Pure predicate deciding whether a listener is suppressed under a silence set.
+ */
+function isListenerSilenced(
+  silenced: SilencedListeners,
+  listenerName: string,
+): boolean {
+  return silenced === null || silenced.has(listenerName);
+}
 
 /**
  * A type for the listener function that handles the wildcard event.
@@ -122,7 +167,6 @@ export interface IEmitter<EventsMap extends EmitterEventMap> {
   ): this;
   off<K extends keyof EventsMap>(eventName: K, name: string): this;
   trigger<K extends keyof EventsMap>(eventName: K, ...args: EventsMap[K]): void;
-  isListenerSilent(listenerName: string): boolean;
   silent<T>(
     callback: () => Promise<T>,
     listeners?: string[] | null,
@@ -167,10 +211,6 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
     keyof EventsMap,
     Map<string, (...args: any[]) => void>
   >();
-  private _listenerSilenceStatus: Map<string, boolean> | null = new Map<
-    string,
-    boolean
-  >();
 
   constructor() {
     super();
@@ -208,9 +248,6 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
         `Listener with name "${name}" already exists for event "${String(eventName)}".`,
       );
     }
-    if (this._listenerSilenceStatus) {
-      this._listenerSilenceStatus.set(name, false);
-    }
 
     listenersForEvent.set(name, listener);
     return this;
@@ -233,9 +270,6 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
     }
 
     listenersForEvent.delete(name);
-    if (this._listenerSilenceStatus) {
-      this._listenerSilenceStatus.delete(name);
-    }
 
     if (listenersForEvent.size === 0) {
       this._namedListeners.delete(eventName);
@@ -249,6 +283,11 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
    * This method is "fire and forget" and does not wait for asynchronous listeners to complete.
    * It handles errors gracefully by catching them and emitting a separate 'error' event.
    *
+   * Listener suppression is resolved from the CURRENT async execution's
+   * silence scope (see silent()). Emissions running outside any silent()
+   * scope are never suppressed, and concurrent emissions in other async
+   * chains are unaffected by this chain's scope.
+   *
    * @param eventName The name of the event to trigger.
    * @param args The arguments to pass to the listener functions.
    */
@@ -256,49 +295,52 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
     eventName: K,
     ...args: EventsMap[K]
   ): void {
-    if (this._listenerSilenceStatus === null) {
-      return;
-    }
+    // Resolve this emission's silence set from its own async chain. There is
+    // no shared instance state: absent store => nothing is silenced.
+    const silenced: SilencedListeners =
+      silenceStorage.getStore() ?? NO_SILENCED_LISTENERS;
 
     const allEventListeners = this._namedListeners.get(EventsEnum.All as K);
     if (allEventListeners) {
       for (const [listenerName, listenerFunc] of allEventListeners) {
-        if (!this.isListenerSilent(listenerName)) {
-          this._executeListener(
-            listenerFunc,
-            listenerName,
-            EventsEnum.All,
-            eventName,
-            ...args,
-          );
-        }
+        this._executeListener(
+          listenerFunc,
+          listenerName,
+          EventsEnum.All,
+          silenced,
+          eventName,
+          ...args,
+        );
       }
     }
 
     const specificListeners = this._namedListeners.get(eventName);
     if (specificListeners) {
       for (const [listenerName, listenerFunc] of specificListeners) {
-        if (!this.isListenerSilent(listenerName)) {
-          this._executeListener(listenerFunc, listenerName, eventName, ...args);
-        }
+        this._executeListener(
+          listenerFunc,
+          listenerName,
+          eventName,
+          silenced,
+          ...args,
+        );
       }
     }
   }
 
   /**
-   * Checks if a listener is currently silent.
-   *
-   * @param listenerName The name of the listener.
-   * @returns True if the listener is silent, false otherwise.
-   */
-  public isListenerSilent(listenerName: string): boolean {
-    return this._listenerSilenceStatus?.get(listenerName) ?? false;
-  }
-
-  /**
-   * Executes a callback with specified listeners silenced.
+   * Executes a callback with specified listeners silenced for the duration of
+   * the callback's async execution ONLY.
    * If listeners is null, all listeners are silenced.
    * If listeners is an array, only those specific listeners are silenced.
+   *
+   * The silence set is computed locally and installed as an immutable
+   * per-async-chain scope; it is threaded through the emit chain
+   * (trigger -> _executeListener) instead of mutating shared instance state.
+   * Overlapping silent() scopes each carry their own set and cannot affect
+   * each other, and emissions outside this async chain are never suppressed.
+   * Nesting can only widen suppression (an inner scope unions with its
+   * enclosing scope and can never un-silence a listener).
    *
    * @param callback The async function to execute.
    * @param listeners Array of listener names to silence, or null to silence all.
@@ -308,26 +350,36 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
     callback: () => Promise<T>,
     listeners: string[] | null = null,
   ): Promise<T> {
-    const previousSilenceStatus = this._listenerSilenceStatus;
+    const enclosing = silenceStorage.getStore() ?? NO_SILENCED_LISTENERS;
 
-    if (listeners === null && previousSilenceStatus === null) {
-      return await callback();
-    }
+    // Monotonic union with the enclosing scope: null (silence-all) wins, and
+    // a nested named scope can only add names, never remove them.
+    const silenced: SilencedListeners =
+      listeners === null || enclosing === null
+        ? null
+        : Object.freeze(new Set([...enclosing, ...listeners]));
 
-    try {
-      if (listeners === null) {
-        this._listenerSilenceStatus = null;
-      } else {
-        const newSilenceStatus = new Map(previousSilenceStatus);
-        for (const listenerName of listeners) {
-          newSilenceStatus.set(listenerName, true);
-        }
-        this._listenerSilenceStatus = newSilenceStatus;
+    return silenceStorage.run(silenced, () => callback());
+  }
+
+  /**
+   * Copies every named listener registered on this emitter onto another
+   * emitter instance. Used when constructing transaction scopes so that
+   * listeners attached to the parent database keep receiving events
+   * triggered inside the transaction, while each instance still owns its
+   * own listener registry (no shared mutable state).
+   *
+   * @param target The emitter that receives copies of this emitter's listeners.
+   */
+  public copyListenersTo(target: Emitter<EventsMap>): void {
+    for (const [eventName, listeners] of this._namedListeners) {
+      for (const [name, listener] of listeners) {
+        target.on(
+          eventName,
+          name,
+          listener as (...args: EventsMap[keyof EventsMap]) => void,
+        );
       }
-
-      return await callback();
-    } finally {
-      this._listenerSilenceStatus = previousSilenceStatus;
     }
   }
 
@@ -336,17 +388,28 @@ export class Emitter<EventsMap extends EmitterEventMap = EmitterEventMap>
    * It handles synchronous errors and attaches a '.catch' handler to Promises
    * returned by asynchronous listeners, without blocking execution.
    *
+   * Suppression is decided by the silence set threaded in from trigger():
+   * `null` silences every listener, otherwise set membership decides. The
+   * check happens here so the entire emit chain carries its scope explicitly
+   * instead of reading shared instance state.
+   *
    * @param listener The listener function to execute.
    * @param listenerName The unique name of the listener (for error reporting).
    * @param originalEventName The original event name it was registered for.
+   * @param silenced The silence set for this emission's scope.
    * @param args The arguments to pass to the listener.
    */
   private _executeListener<K extends keyof EventsMap>(
     listener: (...args: any[]) => void | Promise<void>,
     listenerName: string,
     originalEventName: K | typeof EventsEnum.All,
+    silenced: SilencedListeners,
     ...args: any[]
   ): void {
+    if (isListenerSilenced(silenced, listenerName)) {
+      return;
+    }
+
     try {
       const result = listener(...args);
 

@@ -53,7 +53,7 @@ export async function updateIndexMeta(
   // Save
   collection.set("indexes", indexes);
   await db.silent(() =>
-    db.updateDocument(Base.METADATA, collection.getId(), collection),
+    db.system().updateDocument(Base.METADATA, collection.getId(), collection),
   );
 
   db.trigger(EventsEnum.AttributeUpdate, collection, indexes[indexPosition]!);
@@ -97,7 +97,7 @@ export async function renameIndex(
 
   if (collection.getId() !== Base.METADATA) {
     await db.silent(() =>
-      db.updateDocument(Base.METADATA, collection.getId(), collection),
+      db.system().updateDocument(Base.METADATA, collection.getId(), collection),
     );
   }
 
@@ -230,7 +230,7 @@ export async function createIndex(
 
   if (collection.getId() !== Base.METADATA) {
     await db.silent(() =>
-      db.updateDocument(Base.METADATA, collection.getId(), collection),
+      db.system().updateDocument(Base.METADATA, collection.getId(), collection),
     );
   }
 
@@ -267,7 +267,7 @@ export async function deleteIndex(
 
   if (collection.getId() !== Base.METADATA) {
     await db.silent(() =>
-      db.updateDocument(Base.METADATA, collection.getId(), collection),
+      db.system().updateDocument(Base.METADATA, collection.getId(), collection),
     );
   }
 

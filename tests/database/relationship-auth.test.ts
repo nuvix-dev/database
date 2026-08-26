@@ -4,9 +4,9 @@ import { createTestDb } from "../helpers.js";
 import { Doc } from "@core/doc.js";
 import { AttributeEnum, RelationEnum, OnDelete } from "@core/enums.js";
 import { Attribute } from "@validators/schema.js";
-import { Authorization } from "@utils/authorization.js";
 import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
+import { SYSTEM_CONTEXT } from "@core/auth.js";
 
 /**
  * Regression tests for authorization consistency in internal
@@ -16,7 +16,7 @@ import { Role } from "@utils/role.js";
  * - Public entry points (create/update/delete/find) enforce caller
  *   permissions normally.
  * - INTERNAL relationship maintenance (cascade, sever, FK updates,
- *   junction rows) runs under Authorization.skip so it is atomic and
+ *   junction rows) runs under the system session so it is atomic and
  *   never partially applied for restricted callers.
  * - Aggregates (count/sum) agree for privileged callers.
  */
@@ -24,26 +24,13 @@ describe("Relationship authorization integrity", () => {
   let db: Database;
   const schema = new Date().getTime().toString();
 
-  const restrictAs = (role: string) => {
-    Authorization.cleanRoles();
-    Authorization.setRole(role);
-    Authorization.setDefaultStatus(true);
-  };
-
-  const release = () => {
-    Authorization.cleanRoles();
-    Authorization.setDefaultStatus(false);
-  };
-
   beforeEach(async () => {
-    release();
     db = createTestDb({ namespace: `rel_auth_${schema}` });
     db.setMeta({ schema });
     await db.create();
   });
 
   afterEach(async () => {
-    release();
     await db.delete();
   });
 
@@ -90,34 +77,27 @@ describe("Relationship authorization integrity", () => {
       onDelete: OnDelete.Cascade,
     });
 
-    const author = await db.createDocument(
+    const author = await db.system().createDocument(
       authorsId,
       new Doc({ name: "Alice" }),
     );
-    const post1 = await Authorization.skip(() =>
-      db.createDocument(
-        postsId,
-        new Doc({ title: "P1", author: author.getId() }),
-      ),
+    const post1 = await db.system().createDocument(
+      postsId,
+      new Doc({ title: "P1", author: author.getId() }),
     );
-    const post2 = await Authorization.skip(() =>
-      db.createDocument(
-        postsId,
-        new Doc({ title: "P2", author: author.getId() }),
-      ),
+    const post2 = await db.system().createDocument(
+      postsId,
+      new Doc({ title: "P2", author: author.getId() }),
     );
 
     // Act as restricted caller.
-    restrictAs("user:alice");
-    await db.deleteDocument(authorsId, author.getId());
+    await db.for("user:alice").deleteDocument(authorsId, author.getId());
 
     // Assert as admin: BOTH posts must be gone (no partial cascade).
-    await Authorization.skip(async () => {
-      const p1 = await db.getDocument(postsId, post1.getId());
-      const p2 = await db.getDocument(postsId, post2.getId());
-      expect(p1.empty()).toBe(true);
-      expect(p2.empty()).toBe(true);
-    });
+    const p1 = await db.system().getDocument(postsId, post1.getId());
+    const p2 = await db.system().getDocument(postsId, post2.getId());
+    expect(p1.empty()).toBe(true);
+    expect(p2.empty()).toBe(true);
   });
 
   test("ManyToMany cascade removes linked documents for restricted callers", async () => {
@@ -151,30 +131,31 @@ describe("Relationship authorization integrity", () => {
       onDelete: OnDelete.Cascade,
     });
 
-    const post = await db.createDocument(postsId, new Doc({ title: "P" }));
-    const tag1 = await Authorization.skip(() =>
-      db.createDocument(tagsId, new Doc({ name: "T1" })),
-    );
-    const tag2 = await Authorization.skip(() =>
-      db.createDocument(tagsId, new Doc({ name: "T2" })),
-    );
-    await Authorization.skip(() =>
-      db.updateDocument(
-        postsId,
-        post.getId(),
-        new Doc({
-          tags: { set: [tag1.getId(), tag2.getId()] },
-        }),
-      ),
+    const post = await db
+      .system()
+      .createDocument(postsId, new Doc({ title: "P" }));
+    const tag1 = await db
+      .system()
+      .createDocument(tagsId, new Doc({ name: "T1" }));
+    const tag2 = await db
+      .system()
+      .createDocument(tagsId, new Doc({ name: "T2" }));
+    await db.system().updateDocument(
+      postsId,
+      post.getId(),
+      new Doc({
+        tags: { set: [tag1.getId(), tag2.getId()] },
+      }),
     );
 
-    restrictAs("user:alice");
-    await db.deleteDocument(postsId, post.getId());
+    await db.for("user:alice").deleteDocument(postsId, post.getId());
 
-    await Authorization.skip(async () => {
-      expect((await db.getDocument(tagsId, tag1.getId())).empty()).toBe(true);
-      expect((await db.getDocument(tagsId, tag2.getId())).empty()).toBe(true);
-    });
+    expect(
+      (await db.system().getDocument(tagsId, tag1.getId())).empty(),
+    ).toBe(true);
+    expect(
+      (await db.system().getDocument(tagsId, tag2.getId())).empty(),
+    ).toBe(true);
   });
 
   test("OneToOne re-link clears old partner FK despite no update rights on partner collection", async () => {
@@ -209,24 +190,25 @@ describe("Relationship authorization integrity", () => {
       twoWay: true,
     });
 
-    const m1 = await db.createDocument(membersId, new Doc({ name: "M1" }));
-    const s1 = await Authorization.skip(() =>
-      db.createDocument(seatsId, new Doc({ label: "S1", member: m1.getId() })),
-    );
+    const m1 = await db
+      .system()
+      .createDocument(membersId, new Doc({ name: "M1" }));
+    const s1 = await db
+      .system()
+      .createDocument(seatsId, new Doc({ label: "S1", member: m1.getId() }));
     // S2 is readable by alice (existence check enforces read),
     // but the seats COLLECTION grants her nothing else.
-    const s2 = await Authorization.skip(() =>
-      db.createDocument(
+    const s2 = await db
+      .system()
+      .createDocument(
         seatsId,
         new Doc({
           label: "S2",
           $permissions: [Permission.read(Role.user("alice"))],
         }),
-      ),
-    );
+      );
 
-    restrictAs("user:alice");
-    await db.updateDocument(
+    await db.for("user:alice").updateDocument(
       membersId,
       m1.getId(),
       new Doc({
@@ -236,17 +218,15 @@ describe("Relationship authorization integrity", () => {
 
     // Assert as admin: old partner released, new partner linked.
     // Relationship values are only visible via populate().
-    await Authorization.skip(async () => {
-      const s1After = await db.getDocument(seatsId, s1.getId(), (qb) =>
-        qb.populate("member"),
-      );
-      const s2After = await db.getDocument(seatsId, s2.getId(), (qb) =>
-        qb.populate("member"),
-      );
-      expect(s1After.get("member")).toBeNull();
-      const linked = s2After.get("member") as Doc;
-      expect(linked?.getId()).toBe(m1.getId());
-    });
+    const s1After = await db
+      .system()
+      .getDocument(seatsId, s1.getId(), (qb) => qb.populate("member"));
+    const s2After = await db
+      .system()
+      .getDocument(seatsId, s2.getId(), (qb) => qb.populate("member"));
+    expect(s1After.get("member")).toBeNull();
+    const linked = s2After.get("member") as Doc;
+    expect(linked?.getId()).toBe(m1.getId());
   });
 
   test("count and sum agree for callers with collection-level read", async () => {
@@ -269,29 +249,29 @@ describe("Relationship authorization integrity", () => {
     });
 
     // Two docs readable by bob, one hidden from him at DOCUMENT level.
-    await db.createDocument(
+    await db.system().createDocument(
       metricsId,
       new Doc({
         value: 10,
         $permissions: [Permission.read(Role.user("bob"))],
       }),
     );
-    await db.createDocument(
+    await db.system().createDocument(
       metricsId,
       new Doc({
         value: 20,
         $permissions: [Permission.read(Role.user("bob"))],
       }),
     );
-    await db.createDocument(metricsId, new Doc({ value: 30 }));
+    await db.system().createDocument(metricsId, new Doc({ value: 30 }));
 
-    restrictAs("user:bob");
+    const bob = db.for("user:bob");
 
     // Collection-level read grant ⇒ full visibility, same as find().
-    const total = await db.count(metricsId);
+    const total = await bob.count(metricsId);
     expect(total).toBe(3);
 
-    const summed = await db.sum(metricsId, "value");
+    const summed = await bob.sum(metricsId, "value");
     expect(summed).toBe(60);
   });
 
@@ -319,10 +299,13 @@ describe("Relationship authorization integrity", () => {
       ],
     });
 
-    const doc = await db.createDocument(countersId, new Doc({ n: 5 }));
+    const doc = await db
+      .system()
+      .createDocument(countersId, new Doc({ n: 5 }));
     const adapter = db.getAdapter();
     const bump = (value: number, min?: number, max?: number) =>
       adapter.increaseDocumentAttribute({
+        ctx: SYSTEM_CONTEXT,
         collection: countersId,
         id: doc.getId(),
         attribute: "n",
@@ -333,8 +316,10 @@ describe("Relationship authorization integrity", () => {
       });
     // Direct adapter calls bypass DB-level cache invalidation.
     const readN = async () => {
-      await db.purgeCachedDocument(countersId, doc.getId());
-      const raw = (await db.getDocument(countersId, doc.getId())).get("n");
+      await db.system().purgeCachedDocument(countersId, doc.getId());
+      const raw = (
+        await db.system().getDocument(countersId, doc.getId())
+      ).get("n");
       return Number(raw);
     };
 

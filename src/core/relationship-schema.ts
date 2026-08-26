@@ -175,12 +175,14 @@ export async function createRelationship(
   await db.silent(async () => {
     try {
       await db.withTransaction(async (db) => {
-        await db.updateDocument(Base.METADATA, collection.getId(), collection);
-        await db.updateDocument(
-          Base.METADATA,
-          relatedCollection.getId(),
-          relatedCollection,
-        );
+        await db.system().updateDocument(Base.METADATA, collection.getId(), collection);
+        await db
+          .system()
+          .updateDocument(
+            Base.METADATA,
+            relatedCollection.getId(),
+            relatedCollection,
+          );
       });
     } catch (error: any) {
       try {
@@ -506,12 +508,14 @@ export async function deleteRelationship(
   await db.silent(async () => {
     try {
       await db.withTransaction(async (db) => {
-        await db.updateDocument(Base.METADATA, collection.getId(), collection);
-        await db.updateDocument(
-          Base.METADATA,
-          relatedCollection.getId(),
-          relatedCollection,
-        );
+        await db.system().updateDocument(Base.METADATA, collection.getId(), collection);
+        await db
+          .system()
+          .updateDocument(
+            Base.METADATA,
+            relatedCollection.getId(),
+            relatedCollection,
+          );
       });
     } catch (error: any) {
       throw new DatabaseException(

@@ -5,7 +5,7 @@ import { Doc } from "./doc.js";
 import type { ProcessedQuery } from "./database.js";
 import { fnv1a128 } from "@utils/index.js";
 
-export class Cache extends Base {
+export abstract class Cache extends Base {
   protected cacheName: string = "default";
 
   public getCache(): CacheDriver {

@@ -12,7 +12,7 @@ A modular and performant database library for Nuvix, with internal complexity ab
 🚀 **High Performance** - Optimized queries and connection pooling  
 🔒 **Type Safe** - Full TypeScript support with generated types  
 📊 **Relationships** - OneToOne, OneToMany, ManyToOne, and ManyToMany relationships  
-🛡️ **Security** - Built-in authorization and document-level permissions  
+🛡️ **Security** - Race-free authorization via scoped sessions (`db.for`/`db.system`) and document-level permissions  
 ✅ **Validation** - Comprehensive data validation and structure checking  
 🎯 **Query Builder** - Fluent query interface with filters, sorting, and pagination  
 📇 **Indexing** - Support for key, unique, and fulltext indexes  
@@ -50,10 +50,10 @@ const adapter = new Adapter("postgres://user:pass@localhost:5432/mydb");
 // Initialize database
 const db = new Database(adapter, new Memory());
 
-// Create database schema
+// Admin plane: schema management stays on the Database instance
 await db.create();
 
-// Create a collection
+// Create a collection (admin plane)
 await db.createCollection({
   id: "users",
   attributes: [
@@ -81,8 +81,12 @@ await db.createCollection({
   permissions: [Permission.create(Role.any())],
 });
 
-// Create a document
-const user = await db.createDocument(
+// Document plane: open a session carrying the caller's roles.
+// Role strings follow Role.toString(): "user:123", "role:admin", ...
+const session = db.for("user:123", "role:admin");
+
+// Create a document (authorized as the session's roles)
+const user = await session.createDocument(
   "users",
   new Doc({
     name: "John Doe",
@@ -93,13 +97,13 @@ const user = await db.createDocument(
 );
 
 // Read a document
-const retrieved = await db.getDocument("users", user.getId());
+const retrieved = await session.getDocument("users", user.getId());
 
 // Query documents
-const users = await db.find("users", (qb) => qb.equal("age", 30).limit(10));
+const users = await session.find("users", (qb) => qb.equal("age", 30).limit(10));
 
 // Update a document
-await db.updateDocument(
+await session.updateDocument(
   "users",
   user.getId(),
   new Doc({
@@ -108,8 +112,19 @@ await db.updateDocument(
 );
 
 // Delete a document
-await db.deleteDocument("users", user.getId());
+await session.deleteDocument("users", user.getId());
+
+// Privileged internal work bypasses authorization checks entirely
+const sys = db.system();
+await sys.createDocument("audit_log", new Doc({ event: "user.created" }));
 ```
+
+The API is split into two planes. **Schema operations** — `db.create()`,
+`db.createCollection(...)`, attributes, relationships, indexes — stay on the
+`Database` instance. **Document operations** require a session:
+`db.for(...roles)` scopes every operation to the given roles, while
+`db.system()` returns a privileged session that bypasses authorization
+checks.
 
 ## Core Concepts
 
@@ -191,8 +206,10 @@ await db.createRelationship({
 Use the fluent query builder for complex queries:
 
 ```typescript
+const session = db.for("role:reader");
+
 // Simple queries
-const users = await db.find("users", (qb) =>
+const users = await session.find("users", (qb) =>
   qb
     .equal("status", "active")
     .greaterThan("age", 18)
@@ -202,7 +219,7 @@ const users = await db.find("users", (qb) =>
 );
 
 // Complex queries with multiple conditions
-const posts = await db.find("posts", (qb) =>
+const posts = await session.find("posts", (qb) =>
   qb
     .equal("published", true)
     .search("title", "typescript")
@@ -213,7 +230,7 @@ const posts = await db.find("posts", (qb) =>
 );
 
 // Using Query objects directly
-const results = await db.find("users", [
+const results = await session.find("users", [
   Query.equal("status", ["active"]),
   Query.greaterThan("age", 18),
   Query.limit(25),
@@ -247,7 +264,27 @@ await db.createIndex("posts", "idx_author_date", IndexEnum.Key, [
 
 ### Permissions and Security
 
-Control access with role-based permissions:
+Authorization is explicit and race-free: the library holds no global auth
+state. Every document operation runs inside a **session** that carries an
+immutable `AuthContext` — the role strings the caller acts as:
+
+```typescript
+// Roles use Role.toString() format: "roleName", "roleName:id", ...
+const editor = db.for("user:alice", "role:editor");
+
+// Privileged internal work bypasses all checks
+const sys = db.system();
+```
+
+Access decisions are made by the pure `authorize(ctx, permissions, action)`
+function, evaluated in order:
+
+1. A system context (`db.system()`) authorizes everything.
+2. Empty permissions deny access.
+3. Otherwise, access is granted when any granted permission string is one of
+   the context's roles.
+
+Permissions attach at two levels:
 
 ```typescript
 // Collection-level permissions
@@ -264,7 +301,7 @@ await db.createCollection({
 });
 
 // Document-level permissions
-await db.createDocument('posts', new Doc({
+await editor.createDocument('posts', new Doc({
   title: 'My Post',
   content: 'Content here...',
   $permissions: [
@@ -275,16 +312,34 @@ await db.createDocument('posts', new Doc({
 }));
 ```
 
+With the document above, any session can read the post, but only a session
+carrying `user:123` may update or delete it. Unauthorized operations throw an
+`AuthorizationException`:
+
+```typescript
+try {
+  await db.for("user:bob").deleteDocument("posts", postId);
+} catch (error) {
+  if (error instanceof AuthorizationException) {
+    // user:bob lacks the delete permission
+  }
+}
+```
+
 ## Advanced Usage
 
 ### Transactions
 
-Ensure data consistency with transactions:
+Ensure data consistency with transactions. `withTransaction` lives on the
+session; the callback receives a transactional session bound to the SAME
+`AuthContext`, so nested document operations keep their authorization scope:
 
 ```typescript
-await db.withTransaction(async () => {
-  const user = await db.createDocument("users", userData);
-  const profile = await db.createDocument("profiles", {
+const session = db.for("user:123");
+
+await session.withTransaction(async (tx) => {
+  const user = await tx.createDocument("users", userData);
+  const profile = await tx.createDocument("profiles", {
     userId: user.getId(),
     ...profileData,
   });
@@ -305,7 +360,8 @@ adapter.setMeta({
 });
 
 // All operations will be scoped to the tenant
-const users = await db.find("users"); // Only returns tenant 123's users
+const session = db.for("role:app");
+const users = await session.find("users"); // Only returns tenant 123's users
 ```
 
 ### Caching
@@ -314,12 +370,13 @@ Leverage built-in caching for better performance:
 
 ```typescript
 // Cache is automatically managed
-const user = await db.getDocument("users", "user123"); // Fetches from DB
-const userAgain = await db.getDocument("users", "user123"); // Returns from cache
+const session = db.for("role:app");
+const user = await session.getDocument("users", "user123"); // Fetches from DB
+const userAgain = await session.getDocument("users", "user123"); // Returns from cache
 
 // Manual cache control
-await db.purgeCachedDocument("users", "user123");
-await db.purgeCachedCollection("users");
+await session.purgeCachedDocument("users", "user123");
+await session.purgeCachedCollection("users");
 ```
 
 ### Event Handling
@@ -346,14 +403,14 @@ src/
 │   ├── postgres.ts    # PostgreSQL client wrapper
 │   └── types.ts       # Adapter types
 ├── core/              # Core database functionality
-│   ├── database.ts    # Main Database class
+│   ├── database.ts    # Main Database class + Session (document plane)
+│   ├── auth.ts        # AuthContext model and pure authorize()
 │   ├── doc.ts         # Document class
 │   ├── query.ts       # Query building
 │   ├── cache.ts       # Caching layer
 │   └── enums.ts       # Type enums
 ├── errors/            # Custom error classes
 ├── utils/             # Utility functions
-│   ├── authorization.ts # Permission handling
 │   ├── id.ts          # ID generation
 │   ├── permission.ts  # Permission utilities
 │   └── query-builder.ts # Query builder
@@ -499,7 +556,17 @@ const db = new Database(adapter, myCache);
 
 ## API Reference
 
-### Database Class Methods
+The public surface is split into two planes:
+
+- **Admin plane — `Database`**: schema, collections, attributes,
+  relationships and indexes. No auth context involved.
+- **Document plane — `Session`**: every document read/write. Open a session
+  with `db.for(...roles)` (caller-scoped) or `db.system()` (privileged).
+
+### Database Methods (admin plane)
+
+- `for(...roles | rolesArray)` - Open a scoped session carrying the given roles
+- `system()` - Open a privileged session that bypasses authorization checks
 
 #### Collection Management
 
@@ -509,17 +576,6 @@ const db = new Database(adapter, myCache);
 - `listCollections(limit?, offset?)` - List all collections
 - `updateCollection(options)` - Update collection permissions
 - `deleteCollection(id)` - Delete a collection
-
-#### Document Operations
-
-- `createDocument(collectionId, document)` - Create a document
-- `createDocuments(collectionId, documents)` - Create multiple documents
-- `getDocument(collectionId, id, query?)` - Get document by ID
-- `updateDocument(collectionId, id, updates)` - Update a document
-- `updateDocuments(collectionId, updates, query?)` - Update multiple documents
-- `deleteDocument(collectionId, id)` - Delete a document
-- `deleteDocuments(collectionId, query?)` - Delete multiple documents
-- `find(collectionId, query?)` - Query documents
 
 #### Attribute Management
 
@@ -539,6 +595,28 @@ const db = new Database(adapter, myCache);
 - `createIndex(collectionId, id, type, attributes)` - Create an index
 - `deleteIndex(collectionId, id)` - Delete an index
 - `renameIndex(collectionId, oldName, newName)` - Rename an index
+
+### Session Methods (document plane)
+
+- `find(collectionId, query?, forPermission?)` - Query documents
+- `findOne(collectionId, query?)` - Find a single document
+- `getDocument(collectionId, id, query?, forUpdate?)` - Get document by ID
+- `createDocument(collectionId, document)` - Create a document
+- `createDocuments(collectionId, documents)` - Create multiple documents
+- `updateDocument(collectionId, id, updates)` - Update a document
+- `updateDocuments(collectionId, updates, query?, batchSize?, onNext?, onError?)` - Update multiple documents
+- `deleteDocument(collectionId, id)` - Delete a document
+- `deleteDocuments(collectionId, query?)` - Delete multiple documents
+- `deleteDocumentsBatch(collectionId, query?, batchSize?, onNext?, onError?)` - Delete multiple documents in batches
+- `createOrUpdateDocuments(collectionId, documents, batchSize?, onNext?)` - Upsert documents
+- `createOrUpdateDocumentsWithIncrease(collectionId, attribute, documents, batchSize?, onNext?)` - Upsert documents, incrementing an attribute on update
+- `increaseDocumentAttribute(collectionId, id, attribute, value?, max?)` - Increment an attribute
+- `decreaseDocumentAttribute(collectionId, id, attribute, value?, min?)` - Decrement an attribute
+- `count(collectionId, query?, max?)` - Count documents
+- `sum(collectionId, attribute, query?, max?)` - Sum an attribute across documents
+- `purgeCachedDocument(collectionId, doc)` - Purge all cached variants of a document
+- `purgeCachedCollection(collection)` - Purge every cached entry for a collection
+- `withTransaction(callback)` - Run the callback in a transaction; receives a transactional session preserving the parent AuthContext
 
 ## Contributing
 

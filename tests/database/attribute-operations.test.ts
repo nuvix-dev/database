@@ -29,10 +29,14 @@ Structure.addFormat("email", {
 const schema = new Date().getTime().toString();
 describe("Attribute Operations", () => {
   let db: Database;
+  // Privileged session for the single document-plane call in this suite
+  // (attribute size validation via createDocument).
+  let system: ReturnType<Database["system"]>;
   let testCollectionId: string;
 
   beforeAll(async () => {
     db = createTestDb({ namespace: `coll_op_${schema}` });
+    system = db.system();
     db.setMeta({ schema });
     await db.create();
   });
@@ -677,7 +681,7 @@ describe("Attribute Operations", () => {
 
       // Now try to create a document that exceeds this size
       await expect(
-        db.createDocument(
+        system.createDocument(
           testCollectionId,
           new Doc({
             name: "Test",

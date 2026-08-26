@@ -482,13 +482,23 @@ export abstract class Base<
         return await callback(this);
       }
 
-      const txDatabase = Object.create(Object.getPrototypeOf(this));
-      Object.assign(txDatabase, this);
-      txDatabase.adapter = txAdapter;
+      const txDatabase = this.createTransactionalScope(txAdapter);
 
       return await callback(txDatabase);
     });
   }
+
+  /**
+   * Constructs a real, independently-owned instance of this object bound to
+   * the transaction adapter. Unlike the prototype-clone approach it replaces,
+   * the scoped instance OWNS every mutable field (filters, caches, relation
+   * stack, event listeners), so concurrent or nested transaction scopes can
+   * never alias or leak state into each other or into the parent.
+   *
+   * Scalar configuration is copied by value; mutable containers are freshly
+   * created and seeded from this instance, never shared by reference.
+   */
+  protected abstract createTransactionalScope(txAdapter: Adapter): this;
 
   public get ping() {
     return this.adapter.ping();

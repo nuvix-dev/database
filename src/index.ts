@@ -3,6 +3,10 @@ export * from "./core/database.js";
 export * from "./core/doc.js";
 export * from "./core/query.js";
 export * from "./core/emitter.js";
+// Auth context model — replaces the removed static auth class.
+// `Session` itself is exported via the ./core/database.js star export above.
+export { authorize } from "./core/auth.js";
+export type { AuthContext, SystemAuthContext } from "./core/auth.js";
 export type { Filter, RelationshipUpdates, FilterValue } from "./core/types.js";
 export type { CacheDriver, CacheOperationOptions } from "./cache/index.js";
 

@@ -20,6 +20,7 @@ Database.addFilter("versionFilter", {
 
 describe("Document Operations", () => {
   let db: Database;
+  let system: ReturnType<Database["system"]>;
   let testCollectionId: string;
   const schema = new Date().getTime().toString();
 
@@ -27,6 +28,7 @@ describe("Document Operations", () => {
     db = createTestDb({ namespace: `coll_op_${schema}` });
     db.setMeta({ schema });
     await db.create();
+    system = db.system();
 
     testCollectionId = `test_collection_${Date.now()}`;
 
@@ -104,7 +106,7 @@ describe("Document Operations", () => {
         email: "john@example.com",
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -124,7 +126,7 @@ describe("Document Operations", () => {
         name: "Jane Doe",
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -140,7 +142,7 @@ describe("Document Operations", () => {
         tags: ["tag1", "tag2", "tag3"],
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -155,7 +157,7 @@ describe("Document Operations", () => {
         metadata,
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -166,7 +168,7 @@ describe("Document Operations", () => {
     test("should auto-generate ID if not provided", async () => {
       const documentData = { name: "Auto ID Test" };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -179,7 +181,7 @@ describe("Document Operations", () => {
       const customId = ID.unique();
       const documentData = { $id: customId, name: "Custom ID Test" };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -191,7 +193,7 @@ describe("Document Operations", () => {
       const documentData = { age: 25 }; // missing required 'name' field
 
       await expect(
-        db.createDocument(testCollectionId, new Doc(documentData)),
+        system.createDocument(testCollectionId, new Doc(documentData)),
       ).rejects.toThrow(StructureException);
     });
 
@@ -202,7 +204,7 @@ describe("Document Operations", () => {
       };
 
       await expect(
-        db.createDocument(testCollectionId, new Doc(documentData)),
+        system.createDocument(testCollectionId, new Doc(documentData)),
       ).rejects.toThrow();
     });
 
@@ -218,7 +220,7 @@ describe("Document Operations", () => {
         $permissions: permissions,
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -237,7 +239,7 @@ describe("Document Operations", () => {
       // Enable preserve dates through the database instance
       (db as any).preserveDates = true;
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -255,10 +257,10 @@ describe("Document Operations", () => {
         { name: "User 3", age: 35 },
       ].map((data) => new Doc(data));
 
-      const documents = await db.createDocuments(
+      const documents = (await system.createDocuments(
         testCollectionId,
         documentsData,
-      );
+      )) as Doc<Record<string, any>>[];
 
       expect(documents).toHaveLength(3);
       documents.forEach((doc, index) => {
@@ -268,7 +270,7 @@ describe("Document Operations", () => {
     });
 
     test("should handle empty array", async () => {
-      const documents = await db.createDocuments(testCollectionId, []);
+      const documents = await system.createDocuments(testCollectionId, []);
       expect(documents).toEqual([]);
     });
 
@@ -278,7 +280,7 @@ describe("Document Operations", () => {
         (_, i) => new Doc({ name: `Batch User ${i}` }),
       );
 
-      const documents = await db.createDocuments(
+      const documents = await system.createDocuments(
         testCollectionId,
         documentsData,
       );
@@ -294,7 +296,7 @@ describe("Document Operations", () => {
       ];
 
       await expect(
-        db.createDocuments(testCollectionId, documentsData),
+        system.createDocuments(testCollectionId, documentsData),
       ).rejects.toThrow(StructureException);
     });
   });
@@ -302,12 +304,12 @@ describe("Document Operations", () => {
   describe("getDocument", () => {
     test("should get existing document", async () => {
       const documentData = { name: "Get Test", age: 40 };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
 
-      const retrieved = await db.getDocument(testCollectionId, created.getId());
+      const retrieved = await system.getDocument(testCollectionId, created.getId());
 
       expect(retrieved.getId()).toBe(created.getId());
       expect(retrieved.get("name")).toBe("Get Test");
@@ -316,13 +318,13 @@ describe("Document Operations", () => {
 
     test("should return empty doc for non-existent document", async () => {
       const nonExistentId = ID.unique();
-      const document = await db.getDocument(testCollectionId, nonExistentId);
+      const document = await system.getDocument(testCollectionId, nonExistentId);
 
       expect(document.empty()).toBe(true);
     });
 
     test("should return empty doc for empty ID", async () => {
-      const document = await db.getDocument(testCollectionId, "");
+      const document = await system.getDocument(testCollectionId, "");
 
       expect(document.empty()).toBe(true);
     });
@@ -333,12 +335,12 @@ describe("Document Operations", () => {
         age: 25,
         email: "select@test.com",
       };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
 
-      const retrieved = await db.getDocument(
+      const retrieved = await system.getDocument(
         testCollectionId,
         created.getId(),
         (qb) => qb.select("name", "age"),
@@ -353,7 +355,7 @@ describe("Document Operations", () => {
   describe("updateDocument", () => {
     test("should update existing document", async () => {
       const documentData = { name: "Update Test", age: 30 };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -364,7 +366,7 @@ describe("Document Operations", () => {
         email: "updated@test.com",
       });
 
-      const updated = await db.updateDocument(
+      const updated = await system.updateDocument(
         testCollectionId,
         created.getId(),
         updates,
@@ -378,13 +380,13 @@ describe("Document Operations", () => {
 
     test("should preserve $createdAt during update", async () => {
       const documentData = { name: "Preserve Date Test" };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
 
       const updates = new Doc({ name: "Updated" });
-      const updated = await db.updateDocument(
+      const updated = await system.updateDocument(
         testCollectionId,
         created.getId(),
         updates,
@@ -401,13 +403,13 @@ describe("Document Operations", () => {
         age: 25,
         email: "original@test.com",
       };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
 
       const updates = new Doc({ age: 30 }); // only update age
-      const updated = await db.updateDocument(
+      const updated = await system.updateDocument(
         testCollectionId,
         created.getId(),
         updates,
@@ -420,13 +422,13 @@ describe("Document Operations", () => {
 
     test("should handle array updates", async () => {
       const documentData = { name: "Array Update", tags: ["old1", "old2"] };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
 
       const updates = new Doc({ tags: ["new1", "new2", "new3"] });
-      const updated = await db.updateDocument(
+      const updated = await system.updateDocument(
         testCollectionId,
         created.getId(),
         updates,
@@ -439,7 +441,7 @@ describe("Document Operations", () => {
       const nonExistentId = ID.unique();
       const updates = new Doc({ name: "Should Fail" });
 
-      const updated = await db.updateDocument(
+      const updated = await system.updateDocument(
         testCollectionId,
         nonExistentId,
         updates,
@@ -449,7 +451,7 @@ describe("Document Operations", () => {
 
     test("should validate structure during update", async () => {
       const documentData = { name: "Structure Test" };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -459,7 +461,7 @@ describe("Document Operations", () => {
       });
 
       await expect(
-        db.updateDocument(testCollectionId, created.getId(), updates),
+        system.updateDocument(testCollectionId, created.getId(), updates),
       ).rejects.toThrow();
     });
   });
@@ -471,16 +473,16 @@ describe("Document Operations", () => {
         { length: 5 },
         (_, i) => new Doc({ name: `User ${i}`, age: 20 + i }),
       );
-      await db.createDocuments(testCollectionId, documentsData);
+      await system.createDocuments(testCollectionId, documentsData);
 
       // Update all documents
       const updates = new Doc({ active: false });
-      const modified = await db.updateDocuments(testCollectionId, updates);
+      const modified = await system.updateDocuments(testCollectionId, updates);
 
       expect(modified).toBe(5);
 
       // Verify updates
-      const allDocs = await db.find(testCollectionId);
+      const allDocs = await system.find(testCollectionId);
       allDocs.forEach((doc) => {
         expect(doc.get("active")).toBe(false);
       });
@@ -488,7 +490,7 @@ describe("Document Operations", () => {
 
     test("should update with query filters", async () => {
       // Create test documents
-      await db.createDocuments(testCollectionId, [
+      await system.createDocuments(testCollectionId, [
         new Doc({ name: "Young User", age: 18 }),
         new Doc({ name: "Adult User", age: 25 }),
         new Doc({ name: "Senior User", age: 65 }),
@@ -496,7 +498,7 @@ describe("Document Operations", () => {
 
       // Update only adults (age >= 18 and < 65)
       const updates = new Doc({ active: false });
-      const modified = await db.updateDocuments(
+      const modified = await system.updateDocuments(
         testCollectionId,
         updates,
         (qb) => qb.greaterThanEqual("age", 18).lessThan("age", 65),
@@ -511,10 +513,10 @@ describe("Document Operations", () => {
         { length: 1000 },
         (_, i) => new Doc({ name: `Batch User ${i}`, age: i }),
       );
-      await db.createDocuments(testCollectionId, documentsData);
+      await system.createDocuments(testCollectionId, documentsData);
 
       const updates = new Doc({ active: false });
-      const modified = await db.updateDocuments(
+      const modified = await system.updateDocuments(
         testCollectionId,
         updates,
         [],
@@ -526,7 +528,7 @@ describe("Document Operations", () => {
 
     test("should handle empty updates", async () => {
       const updates = new Doc({});
-      const modified = await db.updateDocuments(testCollectionId, updates);
+      const modified = await system.updateDocuments(testCollectionId, updates);
 
       expect(modified).toBe(0);
     });
@@ -535,25 +537,25 @@ describe("Document Operations", () => {
   describe("deleteDocument", () => {
     test("should delete existing document", async () => {
       const documentData = { name: "Delete Test" };
-      const created = await db.createDocument(
+      const created = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
 
-      const deleted = await db.deleteDocument(
+      const deleted = await system.deleteDocument(
         testCollectionId,
         created.getId(),
       );
       expect(deleted).toBe(true);
 
       // Verify deletion
-      const retrieved = await db.getDocument(testCollectionId, created.getId());
+      const retrieved = await system.getDocument(testCollectionId, created.getId());
       expect(retrieved.empty()).toBe(true);
     });
 
     test("should return false for non-existent document", async () => {
       const nonExistentId = ID.unique();
-      const deleted = await db.deleteDocument(testCollectionId, nonExistentId);
+      const deleted = await system.deleteDocument(testCollectionId, nonExistentId);
 
       expect(deleted).toBe(false);
     });
@@ -571,41 +573,41 @@ describe("Document Operations", () => {
         { length: 5 },
         (_, i) => new Doc({ name: `Delete User ${i}` }),
       );
-      const created = await db.createDocuments(testCollectionId, documentsData);
+      const created = await system.createDocuments(testCollectionId, documentsData);
 
       // Delete all
-      const deletedIds = await db.deleteDocuments(testCollectionId);
+      const deletedIds = await system.deleteDocuments(testCollectionId);
       expect(deletedIds).toHaveLength(5);
 
       // Verify deletion
-      const remaining = await db.find(testCollectionId);
+      const remaining = await system.find(testCollectionId);
       expect(remaining).toHaveLength(0);
     });
 
     test("should delete with query filters", async () => {
       // Create test documents
-      await db.createDocuments(testCollectionId, [
+      await system.createDocuments(testCollectionId, [
         new Doc({ name: "Keep Me", age: 20 }),
         new Doc({ name: "Delete Me 1", age: 30 }),
         new Doc({ name: "Delete Me 2", age: 35 }),
       ]);
 
       // Delete documents with age >= 30
-      const deletedIds = await db.deleteDocuments(testCollectionId, (qb) =>
+      const deletedIds = await system.deleteDocuments(testCollectionId, (qb) =>
         qb.greaterThanEqual("age", 30),
       );
 
       expect(deletedIds).toHaveLength(2);
 
       // Verify remaining document
-      const remaining = await db.find(testCollectionId);
+      const remaining = await system.find(testCollectionId);
       expect(remaining).toHaveLength(1);
       expect(remaining[0]?.get("name")).toBe("Keep Me");
     });
 
     test("should batch delete with query filters", async () => {
       // Create test documents
-      await db.createDocuments(testCollectionId, [
+      await system.createDocuments(testCollectionId, [
         new Doc({ name: "Keep Me", age: 20 }),
         new Doc({ name: "Delete Me 1", age: 30 }),
         new Doc({ name: "Delete Me 2", age: 35 }),
@@ -615,7 +617,7 @@ describe("Document Operations", () => {
       ]);
 
       // Delete documents with age >= 30
-      const deleted = await db.deleteDocumentsBatch(
+      const deleted = await system.deleteDocumentsBatch(
         testCollectionId,
         (qb) => qb.greaterThanEqual("age", 30),
         3,
@@ -624,13 +626,13 @@ describe("Document Operations", () => {
       expect(deleted).toEqual(5);
 
       // Verify remaining document
-      const remaining = await db.find(testCollectionId);
+      const remaining = await system.find(testCollectionId);
       expect(remaining).toHaveLength(1);
       expect(remaining[0]?.get("name")).toBe("Keep Me");
     });
 
     test("should handle empty result set", async () => {
-      const deletedIds = await db.deleteDocuments(testCollectionId, (qb) =>
+      const deletedIds = await system.deleteDocuments(testCollectionId, (qb) =>
         qb.equal("name", "Non Existent"),
       );
 
@@ -646,7 +648,7 @@ describe("Document Operations", () => {
         age: null,
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -666,7 +668,7 @@ describe("Document Operations", () => {
         metadata: largeMetadata,
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );
@@ -680,7 +682,7 @@ describe("Document Operations", () => {
         email: "test+special@example.com",
       };
 
-      const document = await db.createDocument(
+      const document = await system.createDocument(
         testCollectionId,
         new Doc(documentData),
       );

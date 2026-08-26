@@ -11,6 +11,7 @@ const ns = `db_upsert_test_${Date.now()}`;
 
 describe("Database Upsert Operations", () => {
   const db = createTestDb({ namespace: ns });
+  const system = db.system();
   const testCollections: string[] = [];
 
   beforeAll(async () => {
@@ -107,7 +108,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
         );
@@ -115,8 +116,8 @@ describe("Database Upsert Operations", () => {
         expect(result).toBe(2);
 
         // Verify documents were created
-        const doc1 = await db.getDocument(testCollectionId, "user1");
-        const doc2 = await db.getDocument(testCollectionId, "user2");
+        const doc1 = await system.getDocument(testCollectionId, "user1");
+        const doc2 = await system.getDocument(testCollectionId, "user2");
 
         expect(doc1.get("name")).toBe("John Doe");
         expect(doc1.get("score")).toBe(100);
@@ -135,7 +136,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        await db.createOrUpdateDocuments(testCollectionId, initialDocuments);
+        await system.createOrUpdateDocuments(testCollectionId, initialDocuments);
 
         // Then update them
         const updateDocuments = [
@@ -147,7 +148,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           updateDocuments,
         );
@@ -155,7 +156,7 @@ describe("Database Upsert Operations", () => {
         expect(result).toBe(1);
 
         // Verify document was updated
-        const updatedDoc = await db.getDocument(testCollectionId, "user1");
+        const updatedDoc = await system.getDocument(testCollectionId, "user1");
         expect(updatedDoc.get("name")).toBe("John Updated");
         expect(updatedDoc.get("email")).toBe("john.updated@example.com");
         expect(updatedDoc.get("score")).toBe(200);
@@ -163,7 +164,7 @@ describe("Database Upsert Operations", () => {
 
       it("handles mixed create and update operations", async () => {
         // Create initial document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "existing",
             name: "Existing User",
@@ -185,15 +186,15 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
         );
 
         expect(result).toBe(2);
 
-        const existingDoc = await db.getDocument(testCollectionId, "existing");
-        const newDoc = await db.getDocument(testCollectionId, "new");
+        const existingDoc = await system.getDocument(testCollectionId, "existing");
+        const newDoc = await system.getDocument(testCollectionId, "new");
 
         expect(existingDoc.get("name")).toBe("Updated Existing");
         expect(existingDoc.get("score")).toBe(75);
@@ -213,7 +214,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
         );
@@ -227,12 +228,12 @@ describe("Database Upsert Operations", () => {
       });
 
       it("returns 0 for empty document array", async () => {
-        const result = await db.createOrUpdateDocuments(testCollectionId, []);
+        const result = await system.createOrUpdateDocuments(testCollectionId, []);
         expect(result).toBe(0);
       });
 
       it("returns 0 for null/undefined documents", async () => {
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           null as any,
         );
@@ -252,7 +253,7 @@ describe("Database Upsert Operations", () => {
             }),
         );
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
           10, // Custom batch size
@@ -261,8 +262,8 @@ describe("Database Upsert Operations", () => {
         expect(result).toBe(25);
 
         // Verify all documents were created
-        const firstDoc = await db.getDocument(testCollectionId, "batch_user_0");
-        const lastDoc = await db.getDocument(testCollectionId, "batch_user_24");
+        const firstDoc = await system.getDocument(testCollectionId, "batch_user_0");
+        const lastDoc = await system.getDocument(testCollectionId, "batch_user_24");
 
         expect(firstDoc.get("name")).toBe("Batch User 0");
         expect(lastDoc.get("name")).toBe("Batch User 24");
@@ -280,7 +281,7 @@ describe("Database Upsert Operations", () => {
         );
 
         const startTime = Date.now();
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
           50,
@@ -291,7 +292,7 @@ describe("Database Upsert Operations", () => {
         expect(endTime - startTime).toBeLessThan(10000); // Should complete in under 10 seconds
 
         // Sample verify some documents
-        const sampleDoc = await db.getDocument(
+        const sampleDoc = await system.getDocument(
           testCollectionId,
           "large_batch_50",
         );
@@ -316,7 +317,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
           Database.DEFAULT_BATCH_SIZE,
@@ -349,7 +350,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
           Database.DEFAULT_BATCH_SIZE,
@@ -381,7 +382,7 @@ describe("Database Upsert Operations", () => {
         ];
 
         await expect(
-          db.createOrUpdateDocuments(testCollectionId, documents),
+          system.createOrUpdateDocuments(testCollectionId, documents),
         ).rejects.toThrow(DuplicateException);
       });
 
@@ -395,7 +396,7 @@ describe("Database Upsert Operations", () => {
         ];
 
         await expect(
-          db.createOrUpdateDocuments(testCollectionId, documents),
+          system.createOrUpdateDocuments(testCollectionId, documents),
         ).rejects.toThrow(StructureException);
       });
 
@@ -408,7 +409,7 @@ describe("Database Upsert Operations", () => {
         ];
 
         await expect(
-          db.createOrUpdateDocuments("non_existent_collection", documents),
+          system.createOrUpdateDocuments("non_existent_collection", documents),
         ).rejects.toThrow();
       });
 
@@ -420,11 +421,11 @@ describe("Database Upsert Operations", () => {
           score: 100,
         });
 
-        await db.createOrUpdateDocuments(testCollectionId, [initialDoc]);
+        await system.createOrUpdateDocuments(testCollectionId, [initialDoc]);
 
         // Try to update with same data
-        const sameDoc = await db.getDocument(testCollectionId, "unchanged");
-        const result = await db.createOrUpdateDocuments(testCollectionId, [
+        const sameDoc = await system.getDocument(testCollectionId, "unchanged");
+        const result = await system.createOrUpdateDocuments(testCollectionId, [
           sameDoc,
         ]);
 
@@ -443,14 +444,14 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocuments(
+        const result = await system.createOrUpdateDocuments(
           testCollectionId,
           documents,
         );
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "with_defaults");
+        const doc = await system.getDocument(testCollectionId, "with_defaults");
         expect(doc.get("active")).toBe(true); // Default value
         expect(doc.get("score")).toBe(0); // Default value
         expect(doc.get("balance")).toBe(0.0); // Default value
@@ -458,7 +459,7 @@ describe("Database Upsert Operations", () => {
 
       it("preserves existing values for optional attributes not in update", async () => {
         // Create document with specific values
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "preserve_test",
             name: "Original Name",
@@ -468,7 +469,7 @@ describe("Database Upsert Operations", () => {
         ]);
 
         // Update only name, should preserve other values
-        const result = await db.createOrUpdateDocuments(testCollectionId, [
+        const result = await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "preserve_test",
             name: "Updated Name",
@@ -477,7 +478,7 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "preserve_test");
+        const doc = await system.getDocument(testCollectionId, "preserve_test");
         expect(doc.get("name")).toBe("Updated Name");
         expect(doc.get("score")).toBe(500); // Preserved
         expect(doc.get("active")).toBe(false); // Preserved
@@ -493,9 +494,9 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        await db.createOrUpdateDocuments(testCollectionId, documents);
+        await system.createOrUpdateDocuments(testCollectionId, documents);
 
-        const doc = await db.getDocument(testCollectionId, "timestamp_test");
+        const doc = await system.getDocument(testCollectionId, "timestamp_test");
 
         expect(doc.get("$createdAt")).toBeTruthy();
         expect(doc.get("$updatedAt")).toBeTruthy();
@@ -505,14 +506,14 @@ describe("Database Upsert Operations", () => {
 
       it("preserves createdAt on update", async () => {
         // Create document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "created_preserve",
             name: "Original",
           }),
         ]);
 
-        const originalDoc = await db.getDocument(
+        const originalDoc = await system.getDocument(
           testCollectionId,
           "created_preserve",
         );
@@ -522,14 +523,14 @@ describe("Database Upsert Operations", () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Update document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "created_preserve",
             name: "Updated",
           }),
         ]);
 
-        const updatedDoc = await db.getDocument(
+        const updatedDoc = await system.getDocument(
           testCollectionId,
           "created_preserve",
         );
@@ -590,7 +591,7 @@ describe("Database Upsert Operations", () => {
     describe("attribute increase functionality", () => {
       it("increases integer attribute values", async () => {
         // Create initial document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "increase_test",
             name: "Increase User",
@@ -607,7 +608,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,
@@ -615,13 +616,13 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "increase_test");
+        const doc = await system.getDocument(testCollectionId, "increase_test");
         expect(doc.get("score")).toBe(150); // 100 + 50
       });
 
       it("increases float attribute values", async () => {
         // Create initial document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "float_increase",
             name: "Float User",
@@ -638,7 +639,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "balance",
           documents,
@@ -646,7 +647,7 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "float_increase");
+        const doc = await system.getDocument(testCollectionId, "float_increase");
         expect(doc.get("balance")).toBeCloseTo(35.75); // 25.5 + 10.25
       });
 
@@ -659,7 +660,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,
@@ -667,13 +668,13 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "new_with_increase");
+        const doc = await system.getDocument(testCollectionId, "new_with_increase");
         expect(doc.get("score")).toBe(75); // New document, no existing value to increase
       });
 
       it("handles negative increase values (decrease)", async () => {
         // Create initial document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "decrease_test",
             name: "Decrease User",
@@ -690,7 +691,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,
@@ -698,13 +699,13 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "decrease_test");
+        const doc = await system.getDocument(testCollectionId, "decrease_test");
         expect(doc.get("score")).toBe(70); // 100 + (-30)
       });
 
       it("handles zero increase values", async () => {
         // Create initial document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "zero_increase",
             name: "Zero User",
@@ -721,7 +722,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,
@@ -729,7 +730,7 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "zero_increase");
+        const doc = await system.getDocument(testCollectionId, "zero_increase");
         expect(doc.get("score")).toBe(50); // 50 + 0
       });
     });
@@ -744,7 +745,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "", // Empty attribute - should work as regular upsert
           documents,
@@ -752,13 +753,13 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "regular_upsert");
+        const doc = await system.getDocument(testCollectionId, "regular_upsert");
         expect(doc.get("score")).toBe(100);
       });
 
       it("updates normally when no increase attribute specified", async () => {
         // Create initial document
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "normal_update",
             name: "Initial Name",
@@ -775,7 +776,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "", // No increase attribute
           documents,
@@ -783,7 +784,7 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "normal_update");
+        const doc = await system.getDocument(testCollectionId, "normal_update");
         expect(doc.get("score")).toBe(75); // Replaced, not increased
         expect(doc.get("name")).toBe("Updated Name");
       });
@@ -802,7 +803,7 @@ describe("Database Upsert Operations", () => {
             }),
         );
 
-        await db.createOrUpdateDocuments(testCollectionId, initialDocs);
+        await system.createOrUpdateDocuments(testCollectionId, initialDocs);
 
         // Increase scores for all documents
         const increaseDocs = Array.from(
@@ -815,7 +816,7 @@ describe("Database Upsert Operations", () => {
             }),
         );
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           increaseDocs,
@@ -825,8 +826,8 @@ describe("Database Upsert Operations", () => {
         expect(result).toBe(10);
 
         // Verify increases were applied
-        const doc0 = await db.getDocument(testCollectionId, "batch_increase_0");
-        const doc5 = await db.getDocument(testCollectionId, "batch_increase_5");
+        const doc0 = await system.getDocument(testCollectionId, "batch_increase_0");
+        const doc5 = await system.getDocument(testCollectionId, "batch_increase_5");
 
         expect(doc0.get("score")).toBe(5); // 0 + 5
         expect(doc5.get("score")).toBe(55); // 50 + 5
@@ -836,7 +837,7 @@ describe("Database Upsert Operations", () => {
     describe("mixed create and update with increase", () => {
       it("handles mixed operations correctly", async () => {
         // Create one document initially
-        await db.createOrUpdateDocuments(testCollectionId, [
+        await system.createOrUpdateDocuments(testCollectionId, [
           new Doc({
             $id: "existing_for_increase",
             name: "Existing User",
@@ -858,7 +859,7 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,
@@ -866,11 +867,11 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(2);
 
-        const existingDoc = await db.getDocument(
+        const existingDoc = await system.getDocument(
           testCollectionId,
           "existing_for_increase",
         );
-        const newDoc = await db.getDocument(
+        const newDoc = await system.getDocument(
           testCollectionId,
           "new_for_increase",
         );
@@ -890,7 +891,7 @@ describe("Database Upsert Operations", () => {
         ];
 
         // Should work even with no increase attribute value specified
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,
@@ -898,7 +899,7 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await db.getDocument(testCollectionId, "edge_case");
+        const doc = await system.getDocument(testCollectionId, "edge_case");
         expect(doc.get("score")).toBe(0); // Default value
       });
 
@@ -914,7 +915,7 @@ describe("Database Upsert Operations", () => {
         );
 
         // Should cap batch size at 1000
-        const result = await db.createOrUpdateDocumentsWithIncrease(
+        const result = await system.createOrUpdateDocumentsWithIncrease(
           testCollectionId,
           "score",
           documents,

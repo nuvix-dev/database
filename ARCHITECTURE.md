@@ -32,7 +32,7 @@ where each level adds exactly one concern:
 
 | Class | File | Responsibility |
 |---|---|---|
-| `Base` | `src/core/base.ts` | Document encode/decode through per-attribute filter pipelines, validation orchestration, relationship population of result rows, scoped execution (`silent()`, `Authorization.skip()`, tenant/schema overrides), transaction cloning |
+| `Base` | `src/core/base.ts` | Document encode/decode through per-attribute filter pipelines, validation orchestration, relationship population of result rows, explicit `AuthContext` threading into encode/decode/populate/query processing, scoped execution (`silent()` scopes, tenant/schema overrides), transactional scope construction |
 | `Cache` | `src/core/cache.ts` | Cache-key scheme and tag-based purge helpers |
 | `Database` | `src/core/database.ts` | Public facade: collections, attributes, indexes, document CRUD, batched bulk operations, aggregations |
 
@@ -41,9 +41,9 @@ where each level adds exactly one concern:
 | Directory | Contents |
 |---|---|
 | `src/adapters/` | `Adapter` (concrete PostgreSQL DDL/DML), `BaseAdapter` (SQL building shared logic), `PostgresClient` (Bun `SQL` wrapper), `error-mapper` (SQLSTATE → typed errors) |
-| `src/core/` | `Database`/`Cache`/`Base`, `Doc<T>` document wrapper, `Query`, `Emitter`, enums, relationship resolution, index manager |
+| `src/core/` | `Database`/`Cache`/`Base`, `Session` (document plane), the immutable `AuthContext` model + pure `authorize()` (`auth.ts`), `Doc<T>` document wrapper, `Query`, `Emitter`, enums, relationship resolution, index manager |
 | `src/validators/` | Schema definitions (`Attribute`, `Index`, `Collection`), document structure/permission validators, query validators (`filter`, `limit`, `offset`, `order`, `cursor`, `select`, `populate`), per-type value validators |
-| `src/utils/` | `Authorization`, ID generation, permission/role helpers, fluent `QueryBuilder`, type generator |
+| `src/utils/` | ID generation, permission/role helpers, fluent `QueryBuilder`, type generator |
 | `src/errors/` | Typed error hierarchy (`Authorization`, `Structure`, `Query`, `Conflict`, `Duplicate`, `NotFound`, `Timeout`, `Transaction`, …) |
 | `src/cache/` | `CacheDriver` interface — four async methods (`get`, `set`, `flushByTags`, `flush`); satisfied structurally, so any compatible driver works without inheriting |
 | `src/config/` + `src/cli/` | Config loader and the `generate-types` CLI |
@@ -52,11 +52,11 @@ Public API surface is defined entirely by `src/index.ts`.
 
 ## Read path
 
-`db.find(...)` / `db.getDocument(...)`:
+A session's `find(...)` / `getDocument(...)`:
 
-1. Collection metadata is fetched via `silent()` (system read — authorization skipped).
+1. Collection metadata is fetched via `silent()` — a privileged internal read running under `SYSTEM_CONTEXT`.
 2. `processQueries` validates every filter/select/populate against the schema and resolves relationship attributes into a join plan.
-3. Authorization: collection `$permissions` are checked; with `documentSecurity` enabled, role predicates are pushed into the SQL instead.
+3. Authorization: the session's `AuthContext` is checked against collection `$permissions` by the pure `authorize()` function; with `documentSecurity` enabled, role predicates derived from the context's roles are pushed into the SQL instead.
 4. `adapter.find` builds a single SELECT: LEFT JOINs for one-to-one/many-to-one relations, junction-table joins for many-to-many, cursor pagination, tenant predicates.
 5. Joined rows are reassembled into nested documents (`processFindResults`), values are decoded through attribute filter pipelines, and the result is cached under a query-hash key.
 
@@ -64,7 +64,7 @@ Public API surface is defined entirely by `src/index.ts`.
 
 `createDocument` / `updateDocument` / bulk variants:
 
-1. Authorization check for the operation.
+1. Authorization check for the operation against the session's `AuthContext`.
 2. Validation: permission strings (`Permissions` validator), document shape against collection schema (`Structure`), per-type value validation during encode.
 3. `encode` runs each value through its attribute's filter pipeline (e.g., datetime normalization, JSON encoding).
 4. Execution happens inside `withTransaction`; permissions are synced into the `<collection>_perms` side table; cache tags for the document/collection are flushed.
@@ -86,12 +86,32 @@ Configured on the adapter via `setMeta`:
 
 ## Authorization
 
-Two levels:
+Authorization is built on an **immutable auth context** (`src/core/auth.ts`):
+
+- `AuthContext` — `{ roles: readonly string[] }`, frozen at creation. Roles are plain strings produced by `Role.toString()`: `"roleName"`, `"roleName:id"`, `"roleName/dim"`, or `"roleName:id/dim"`.
+- `SystemAuthContext` — extends `AuthContext` with a branded `system: true` flag; obtainable only via `db.system()`.
+- `SYSTEM_CONTEXT` — a single frozen shared instance used for internal operations.
+
+Checks are performed by the pure function `authorize(ctx, permissions, action)`, evaluated in order:
+
+1. A system context authorizes everything.
+2. Empty permissions deny.
+3. Otherwise access is granted when any granted permission's role string is present in `ctx.roles`.
+
+Two levels of permissions are enforced:
 
 - **Collection-level**: `$permissions` on collection metadata, checked before each operation.
 - **Document-level**: `documentSecurity: true` consults the `_perms` side table.
 
-Enforcement happens *inside* generated SQL: `Authorization.getRoles()` feeds role predicates into WHERE clauses, so a read can never return rows the caller cannot see. System operations bypass checks with `Authorization.skip()` / `silent()` rather than granting broad roles.
+Enforcement happens *inside* generated SQL: the context's roles feed permission predicates into WHERE clauses, so a read can never return rows the caller cannot see. Internal operations pass `SYSTEM_CONTEXT` explicitly down their own call chains rather than granting broad roles.
+
+### Sessions: document plane vs admin plane
+
+Document operations live on `Session`, not on `Database`. Callers obtain a session bound to a fixed context — `db.for(...roles)` accepts varargs or an array of role strings, and `db.system()` returns a privileged session. Sessions share the database's adapter, cache and state (no new connection pool) and expose only document-plane methods, which makes calling a document operation without a session a compile-time error. The context travels as an explicit parameter through `Base.encode/decode/populate/processQueries` and into the adapter's SQL builders — there are no ambient reads, so authorization cannot drift between the check and the query it guards.
+
+### Emitter silencing
+
+`silent(fn)` suppresses selected lifecycle events while a callback runs. The set of silenced listener names is an immutable, frozen `ReadonlySet` threaded as a parameter through the emission path; a scope-local async context bridges it across await points inside the scope only. Concurrent emissions outside the scope are unaffected, and overlapping scopes stay independent.
 
 ## Caching
 
@@ -101,7 +121,7 @@ Enforcement happens *inside* generated SQL: `Authorization.getRoles()` feeds rol
 
 ## Transactions
 
-`db.withTransaction(async (tx) => ...)` clones the `Database` and binds it to a transaction-scoped adapter, so every operation inside shares one transaction. Bulk operations chunk internally and run per-chunk transactions with per-document `onNext`/`onError` callbacks.
+`session.withTransaction(async (tx) => ...)` constructs a fresh, independently-owned `Database` scope bound to a transaction-scoped adapter, so every operation inside shares one transaction. The scope owns all mutable state itself — filters, caches, relation stack, listeners and its own document-plane closures; scalar configuration is copied by value and containers are freshly created, never shared with the parent. This replaces an earlier prototype-clone approach that aliased symbol-keyed closures and let session operations escape the transaction. The transaction session preserves the parent's `AuthContext`, so authorization behaves identically inside and outside the callback. Bulk operations chunk internally and run per-chunk transactions with per-document `onNext`/`onError` callbacks.
 
 ## Query validation
 
@@ -116,7 +136,7 @@ This pipeline is why malformed or unindexed query shapes fail fast with typed er
 
 ## Events
 
-`Emitter` supports wildcard listeners (`Events.All`) and listener silencing. The adapter emits around DDL/DML execution; the database layer emits document lifecycle events (`DocumentCreate`, …).
+`Emitter` supports wildcard listeners (`Events.All`). Listener silencing is parameter-based: the set of silenced listener names is an immutable, frozen `ReadonlySet` passed down the emission path instead of mutated shared state, so silencing one scope never leaks into concurrent emissions. The adapter emits around DDL/DML execution; the database layer emits document lifecycle events (`DocumentCreate`, …).
 
 ## Type generation
 

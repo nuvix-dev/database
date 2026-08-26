@@ -7,6 +7,7 @@ import {
   RelationEnum,
   RelationSideEnum,
 } from "@core/enums.js";
+import { AuthContext } from "@core/auth.js";
 import { Query } from "@core/query.js";
 import { QueryBuilder } from "@utils/query-builder.js";
 import { Attribute } from "@validators/schema.js";
@@ -47,6 +48,7 @@ export interface ColumnInfo {
 }
 
 export interface IncreaseDocumentAttribute {
+  ctx: AuthContext;
   collection: string;
   id: string;
   attribute: string;

@@ -4,7 +4,6 @@ import { createTestDb } from "./helpers.js";
 import { Doc } from "@core/doc.js";
 import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
-import { Authorization } from "@utils/authorization.js";
 import { AttributeEnum } from "@core/enums.js";
 
 describe("Database Permissions", () => {
@@ -17,11 +16,6 @@ describe("Database Permissions", () => {
     db = createTestDb({ namespace: `perm_test_${schema}` });
     db.setMeta({ schema });
     await db.create();
-
-    // Enable authorization for permission tests
-    Authorization.enable();
-    // Set role that can create documents
-    Authorization.setRole("any");
 
     // Create collection for collection-level permission testing (documentSecurity: false)
     collectionLevelCollectionId = `collection_level_perms_${Date.now()}`;
@@ -82,9 +76,6 @@ describe("Database Permissions", () => {
   });
 
   afterEach(async () => {
-    // Reset authorization state
-    Authorization.disable();
-    Authorization.cleanRoles();
     await db.delete();
   });
 
@@ -96,19 +87,17 @@ describe("Database Permissions", () => {
         email: "collection@test.com",
       };
 
-      const document = await Authorization.skip(() =>
-        db.createDocument(collectionLevelCollectionId, new Doc(documentData)),
+      const document = await db.system().createDocument(
+        collectionLevelCollectionId,
+        new Doc(documentData),
       );
       testDocumentId = document.getId();
     });
 
     test("should return document when user has collection-level read permission", async () => {
-      // Clean previous roles and set admin user
-      Authorization.cleanRoles();
-      Authorization.setRole("any");
-      Authorization.setRole("user:admin_user");
+      const session = db.for("any", "user:admin_user");
 
-      const document = await db.getDocument(
+      const document = await session.getDocument(
         collectionLevelCollectionId,
         testDocumentId,
       );
@@ -119,30 +108,21 @@ describe("Database Permissions", () => {
     });
 
     test("should return empty document when user lacks collection-level read permission", async () => {
-      // Clean previous roles and set unauthorized user
-      Authorization.cleanRoles();
-      Authorization.unsetRole("any");
-      Authorization.setRole("user:regular_user");
+      const session = db.for("user:regular_user");
 
       await expect(
-        db.getDocument(collectionLevelCollectionId, testDocumentId),
+        session.getDocument(collectionLevelCollectionId, testDocumentId),
       ).rejects.toThrow();
     });
 
-    test("should return document when authorization is disabled", async () => {
-      // Disable authorization
-      Authorization.disable();
-
-      const document = await db.getDocument(
+    test("should bypass authorization checks when using system session", async () => {
+      const document = await db.system().getDocument(
         collectionLevelCollectionId,
         testDocumentId,
       );
 
       expect(document.empty()).toBe(false);
       expect(document.getId()).toBe(testDocumentId);
-
-      // Re-enable for other tests
-      Authorization.enable();
     });
   });
 
@@ -161,7 +141,7 @@ describe("Database Permissions", () => {
         ],
       };
 
-      const allowedDocument = await db.createDocument(
+      const allowedDocument = await db.for("any").createDocument(
         documentLevelCollectionId,
         new Doc(allowedDocumentData),
       );
@@ -177,7 +157,7 @@ describe("Database Permissions", () => {
         ],
       };
 
-      const deniedDocument = await db.createDocument(
+      const deniedDocument = await db.for("any").createDocument(
         documentLevelCollectionId,
         new Doc(deniedDocumentData),
       );
@@ -185,11 +165,9 @@ describe("Database Permissions", () => {
     });
 
     test("should return document when user has document-level read permission", async () => {
-      // Clean previous roles and set privileged user
-      Authorization.cleanRoles();
-      Authorization.setRole("user:privileged_user");
+      const session = db.for("user:privileged_user");
 
-      const document = await db.findOne(documentLevelCollectionId, (qb) =>
+      const document = await session.findOne(documentLevelCollectionId, (qb) =>
         qb.equal("$id", allowedDocumentId),
       );
 
@@ -199,11 +177,9 @@ describe("Database Permissions", () => {
     });
 
     test("should return empty document when user lacks document-level read permission", async () => {
-      // Clean previous roles and set privileged user
-      Authorization.cleanRoles();
-      Authorization.setRole("user:privileged_user");
+      const session = db.for("user:privileged_user");
 
-      const document = await db.findOne(documentLevelCollectionId, (qb) =>
+      const document = await session.findOne(documentLevelCollectionId, (qb) =>
         qb.equal("$id", deniedDocumentId),
       );
 
@@ -223,11 +199,9 @@ describe("Database Permissions", () => {
         documentSecurity: true,
       });
 
-      // Clean previous roles and set privileged user
-      Authorization.cleanRoles();
-      Authorization.setRole("user:privileged_user");
+      const session = db.for("user:privileged_user");
 
-      const document = await db.findOne(documentLevelCollectionId, (qb) =>
+      const document = await session.findOne(documentLevelCollectionId, (qb) =>
         qb.equal("$id", allowedDocumentId),
       );
 
@@ -236,30 +210,24 @@ describe("Database Permissions", () => {
     });
 
     test("should return empty document when user lacks both collection and document permissions", async () => {
-      // Clean previous roles and set unauthorized user
-      Authorization.cleanRoles();
-      Authorization.setRole("user:unauthorized_user");
+      const session = db.for("user:unauthorized_user");
 
-      const document = await db.findOne(documentLevelCollectionId, (qb) =>
+      const document = await session.findOne(documentLevelCollectionId, (qb) =>
         qb.equal("$id", allowedDocumentId),
       );
 
       expect(document.empty()).toBe(true);
     });
 
-    test("should return document when authorization is disabled", async () => {
-      // Disable authorization
-      Authorization.disable();
-
-      const document = await db.findOne(documentLevelCollectionId, (qb) =>
-        qb.equal("$id", allowedDocumentId),
-      );
+    test("should bypass authorization checks when using system session", async () => {
+      const document = await db
+        .system()
+        .findOne(documentLevelCollectionId, (qb) =>
+          qb.equal("$id", allowedDocumentId),
+        );
 
       expect(document.empty()).toBe(false);
       expect(document.getId()).toBe(allowedDocumentId);
-
-      // Re-enable for other tests
-      Authorization.enable();
     });
   });
 
@@ -294,7 +262,7 @@ describe("Database Permissions", () => {
         $permissions: [Permission.read(Role.user("document_reader"))],
       };
 
-      const document = await db.createDocument(
+      const document = await db.for("any").createDocument(
         comboCollectionId,
         new Doc(documentData),
       );
@@ -303,10 +271,12 @@ describe("Database Permissions", () => {
 
     test("should prioritize document permissions when both exist", async () => {
       // User has collection permission but not document permission
-      Authorization.cleanRoles();
-      Authorization.setRole("user:document_reader");
+      const session = db.for("user:document_reader");
 
-      const document = await db.getDocument(comboCollectionId, testDocumentId);
+      const document = await session.getDocument(
+        comboCollectionId,
+        testDocumentId,
+      );
 
       // Should return empty because document permission takes precedence
       expect(document.empty()).toBe(false);
@@ -314,10 +284,12 @@ describe("Database Permissions", () => {
 
     test("should allow access when user has document permission", async () => {
       // User has document permission
-      Authorization.cleanRoles();
-      Authorization.setRole("user:document_reader");
+      const session = db.for("user:document_reader");
 
-      const document = await db.getDocument(comboCollectionId, testDocumentId);
+      const document = await session.getDocument(
+        comboCollectionId,
+        testDocumentId,
+      );
 
       expect(document.empty()).toBe(false);
       expect(document.get("name")).toBe("Combo Test");
@@ -348,31 +320,28 @@ describe("Database Permissions", () => {
       });
 
       // Create test document
-      const document = await db.createDocument(
+      const document = await db.for("any").createDocument(
         multiRoleCollectionId,
         new Doc({ name: "Multi Role Test" }),
       );
 
       // Test admin access
-      Authorization.cleanRoles();
-      Authorization.setRole("user:admin");
-      let retrieved = await db.getDocument(
-        multiRoleCollectionId,
-        document.getId(),
-      );
+      let retrieved = await db
+        .for("user:admin")
+        .getDocument(multiRoleCollectionId, document.getId());
       expect(retrieved.empty()).toBe(false);
 
-      // Clean roles and test moderator access
-      Authorization.cleanRoles();
-      Authorization.setRole("user:moderator");
-      retrieved = await db.getDocument(multiRoleCollectionId, document.getId());
+      // Test moderator access
+      retrieved = await db
+        .for("user:moderator")
+        .getDocument(multiRoleCollectionId, document.getId());
       expect(retrieved.empty()).toBe(false);
 
-      // Clean roles and test unauthorized user
-      Authorization.cleanRoles();
-      Authorization.setRole("user:regular");
+      // Test unauthorized user
       await expect(
-        db.getDocument(multiRoleCollectionId, document.getId()),
+        db
+          .for("user:regular")
+          .getDocument(multiRoleCollectionId, document.getId()),
       ).rejects.toThrow();
     });
 
@@ -398,15 +367,13 @@ describe("Database Permissions", () => {
       });
 
       // Create test document
-      const document = await db.createDocument(
+      const document = await db.for("any").createDocument(
         anyRoleCollectionId,
         new Doc({ name: "Any Role Test" }),
       );
 
       // Test with any user role
-      Authorization.cleanRoles();
-      Authorization.setRole("any");
-      const retrieved = await db.getDocument(
+      const retrieved = await db.for("any").getDocument(
         anyRoleCollectionId,
         document.getId(),
       );

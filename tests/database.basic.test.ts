@@ -7,10 +7,14 @@ import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
 
 let db: Database;
+// Document-plane operations require a session; this suite exercises mechanics,
+// so a privileged system session is used.
+let system: ReturnType<Database["system"]>;
 
 describe("Database - basic collections and documents", () => {
   beforeAll(async () => {
     db = createTestDb({ namespace: `db_basic_${Date.now()}` });
+    system = db.system();
     await db.create("public");
   });
 
@@ -51,7 +55,7 @@ describe("Database - basic collections and documents", () => {
     expect(collection.get("$id")).toBe("users");
 
     // create doc
-    const created = await db.createDocument(
+    const created = await system.createDocument(
       "users",
       new Doc({
         name: "Ada",
@@ -64,7 +68,7 @@ describe("Database - basic collections and documents", () => {
     expect(created.get("name")).toBe("Ada");
 
     // get doc
-    const got = await db.getDocument("users", created.get("$id"));
+    const got = await system.getDocument("users", created.get("$id"));
     expect(got.get("name")).toBe("Ada");
 
     expect(await db.exists(db.schema, "users")).toBe(true);

@@ -6,11 +6,13 @@
  * here; Database is imported type-only to avoid runtime circular imports.
  *
  * These handlers run inside create/update/delete document flows and perform
- * internal relationship bookkeeping. Authorization.skip-wrapped blocks below
- * are security-critical, regression-tested behavior (WS-F1/F2): they bypass
- * target-collection authorization ONLY for deterministic schema maintenance
- * (junction-table writes, twoWay OneToOne clear/set, cascade/set-null/restrict
- * enforcement) and must be preserved byte-for-byte.
+ * internal relationship bookkeeping. Every document-plane call below runs on
+ * a privileged system session (`db.system()`, carrying SYSTEM_CONTEXT).
+ * Formerly global-skip-wrapped blocks are security-critical,
+ * regression-tested behavior (WS-F1/F2): they bypass target-collection
+ * authorization ONLY for deterministic schema maintenance (junction-table
+ * writes, twoWay OneToOne clear/set, cascade/set-null/restrict enforcement)
+ * and their semantics are preserved byte-for-byte by the system session.
  */
 import type { Database } from "./database.js";
 import {
@@ -26,7 +28,6 @@ import type {
 } from "@validators/schema.js";
 import { Doc } from "./doc.js";
 import { DatabaseException, RelationshipException } from "@errors/index.js";
-import { Authorization } from "@utils/authorization.js";
 import { Query } from "./query.js";
 import { ID } from "@utils/id.js";
 import { Permission } from "@utils/permission.js";
@@ -67,7 +68,7 @@ export async function createRelationships(
         (type === RelationEnum.ManyToOne && side === RelationSideEnum.Parent)
       ) {
         const relatedDoc = await db.silent(() =>
-          db.getDocument(options.relatedCollection, value),
+          db.system().getDocument(options.relatedCollection, value),
         );
 
         if (relatedDoc.empty() && !db.checksRelationshipsExist) {
@@ -87,7 +88,9 @@ export async function createRelationships(
             relatedDoc.set(options.twoWayKey!, document.getId());
             await db.silent(() =>
               db.skipCheckRelationshipsExist(() =>
-                db.updateDocument(options.relatedCollection, value, relatedDoc),
+                db
+                  .system()
+                  .updateDocument(options.relatedCollection, value, relatedDoc),
               ),
             );
           }
@@ -113,7 +116,7 @@ export async function createRelationships(
         } else {
           for (const childId of setIds) {
             const childDoc = await db.silent(() =>
-              db.getDocument(options.relatedCollection, childId),
+              db.system().getDocument(options.relatedCollection, childId),
             );
             if (childDoc.empty() && !db.checksRelationshipsExist) {
               throw new RelationshipException(`Child '${childId}' not found`);
@@ -121,7 +124,9 @@ export async function createRelationships(
             childDoc.set(options.twoWayKey!, document.getId());
             await db.silent(() =>
               db.skipCheckRelationshipsExist(() =>
-                db.updateDocument(options.relatedCollection, childId, childDoc),
+                db
+                  .system()
+                  .updateDocument(options.relatedCollection, childId, childDoc),
               ),
             );
           }
@@ -183,21 +188,17 @@ export async function handleManyToMany(
   );
 
   if (setIds !== undefined) {
-    await Authorization.skip(() =>
-      db.silent(() =>
-        db.deleteDocuments(junctionCollection, [
-          Query.equal(relationship.getId(), [document.getId()]),
-        ]),
-      ),
+    await db.silent(() =>
+      db.system().deleteDocuments(junctionCollection, [
+        Query.equal(relationship.getId(), [document.getId()]),
+      ]),
     );
   } else if (disconnectIds.length > 0) {
-    await Authorization.skip(() =>
-      db.silent(() =>
-        db.deleteDocuments(junctionCollection, [
-          Query.equal(relationship.getId(), [document.getId()]),
-          Query.equal(options.twoWayKey!, disconnectIds),
-        ]),
-      ),
+    await db.silent(() =>
+      db.system().deleteDocuments(junctionCollection, [
+        Query.equal(relationship.getId(), [document.getId()]),
+        Query.equal(options.twoWayKey!, disconnectIds),
+      ]),
     );
   }
 
@@ -206,7 +207,7 @@ export async function handleManyToMany(
 
   if (uniqueTargetIds.length > 0) {
     const relatedDocs = await db.silent(() =>
-      db.find(options.relatedCollection, (qb) =>
+      db.system().find(options.relatedCollection, (qb) =>
         qb.equal("$id", ...uniqueTargetIds),
       ),
     );
@@ -235,9 +236,7 @@ export async function handleManyToMany(
     );
 
     await db.silent(() =>
-      Authorization.skip(() =>
-        db.createDocuments(junctionCollection, linkDocs),
-      ),
+      db.system().createDocuments(junctionCollection, linkDocs),
     );
   }
 }
@@ -283,7 +282,7 @@ export async function updateDocumentRelationships(
         }
 
         const relatedDoc = await db.silent(() =>
-          db.getDocument(options.relatedCollection, value),
+          db.system().getDocument(options.relatedCollection, value),
         );
 
         if (relatedDoc.empty() && !db.checksRelationshipsExist) {
@@ -302,13 +301,11 @@ export async function updateDocumentRelationships(
           if (options.twoWay) {
             // Clear previous relationship
             await db.silent(() =>
-              Authorization.skip(() =>
-                db.skipCheckRelationshipsExist(() =>
-                  db.updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: null }),
-                    (qb) => qb.equal(options.twoWayKey!, document.getId()),
-                  ),
+              db.skipCheckRelationshipsExist(() =>
+                db.system().updateDocuments(
+                  options.relatedCollection,
+                  new Doc({ [options.twoWayKey!]: null }),
+                  (qb) => qb.equal(options.twoWayKey!, document.getId()),
                 ),
               ),
             );
@@ -316,13 +313,11 @@ export async function updateDocumentRelationships(
             // Set new relationship
             if (value !== null && typeof value === "string") {
               await db.silent(() =>
-                Authorization.skip(() =>
-                  db.skipCheckRelationshipsExist(() =>
-                    db.updateDocument(
-                      options.relatedCollection,
-                      value,
-                      new Doc({ [options.twoWayKey!]: document.getId() }),
-                    ),
+                db.skipCheckRelationshipsExist(() =>
+                  db.system().updateDocument(
+                    options.relatedCollection,
+                    value,
+                    new Doc({ [options.twoWayKey!]: document.getId() }),
                   ),
                 ),
               );
@@ -363,13 +358,11 @@ export async function updateDocumentRelationships(
           if (setIds !== undefined) {
             // Clear all current children
             await db.silent(() =>
-              Authorization.skip(() =>
-                db.skipCheckRelationshipsExist(() =>
-                  db.updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: null }),
-                    (qb) => qb.equal(options.twoWayKey!, document.getId()),
-                  ),
+              db.skipCheckRelationshipsExist(() =>
+                db.system().updateDocuments(
+                  options.relatedCollection,
+                  new Doc({ [options.twoWayKey!]: null }),
+                  (qb) => qb.equal(options.twoWayKey!, document.getId()),
                 ),
               ),
             );
@@ -377,13 +370,11 @@ export async function updateDocumentRelationships(
             //  If new set is not empty, set new children
             if (setIds && setIds.length > 0) {
               await db.silent(() =>
-                Authorization.skip(() =>
-                  db.skipCheckRelationshipsExist(() =>
-                    db.updateDocuments(
-                      options.relatedCollection,
-                      new Doc({ [options.twoWayKey!]: document.getId() }),
-                      [Query.equal("$id", setIds)],
-                    ),
+                db.skipCheckRelationshipsExist(() =>
+                  db.system().updateDocuments(
+                    options.relatedCollection,
+                    new Doc({ [options.twoWayKey!]: document.getId() }),
+                    [Query.equal("$id", setIds)],
                   ),
                 ),
               );
@@ -399,13 +390,11 @@ export async function updateDocumentRelationships(
             // Disconnect
             if (disconnectSet.size > 0) {
               await db.silent(() =>
-                Authorization.skip(() =>
-                  db.skipCheckRelationshipsExist(() =>
-                    db.updateDocuments(
-                      options.relatedCollection,
-                      new Doc({ [options.twoWayKey!]: null }),
-                      [Query.equal("$id", Array.from(disconnectSet))],
-                    ),
+                db.skipCheckRelationshipsExist(() =>
+                  db.system().updateDocuments(
+                    options.relatedCollection,
+                    new Doc({ [options.twoWayKey!]: null }),
+                    [Query.equal("$id", Array.from(disconnectSet))],
                   ),
                 ),
               );
@@ -414,13 +403,11 @@ export async function updateDocumentRelationships(
             // Connect
             if (connectSet.size > 0) {
               await db.silent(() =>
-                Authorization.skip(() =>
-                  db.skipCheckRelationshipsExist(() =>
-                    db.updateDocuments(
-                      options.relatedCollection,
-                      new Doc({ [options.twoWayKey!]: document.getId() }),
-                      [Query.equal("$id", Array.from(connectSet))],
-                    ),
+                db.skipCheckRelationshipsExist(() =>
+                  db.system().updateDocuments(
+                    options.relatedCollection,
+                    new Doc({ [options.twoWayKey!]: document.getId() }),
+                    [Query.equal("$id", Array.from(connectSet))],
                   ),
                 ),
               );
@@ -539,12 +526,10 @@ export async function handleOnDelete(
     );
 
     if (onDelete === OnDelete.Restrict) {
-      const count = await Authorization.skip(() =>
-        db.count(
-          junctionCollection,
-          [Query.equal(parentAttr, [document.getId()])],
-          1,
-        ),
+      const count = await db.system().count(
+        junctionCollection,
+        [Query.equal(parentAttr, [document.getId()])],
+        1,
       );
       if (count > 0) {
         throw new RelationshipException(
@@ -552,31 +537,29 @@ export async function handleOnDelete(
         );
       }
     } else if (onDelete === OnDelete.SetNull) {
-      await Authorization.skip(() =>
-        db.deleteDocuments(junctionCollection, [
-          Query.equal(parentAttr, [document.getId()]),
-        ]),
-      );
+      await db.system().deleteDocuments(junctionCollection, [
+        Query.equal(parentAttr, [document.getId()]),
+      ]);
     } else if (onDelete === OnDelete.Cascade) {
       // Internal maintenance: cascading is deterministic schema behavior
-      // authorized by the parent delete. Skipping target auth keeps
+      // authorized by the parent delete. Running on a system session keeps
       // cascades atomic instead of partially applied or blocked.
-      await Authorization.skip(async () => {
-        const relatedIds = (
-          await db.find(junctionCollection, (qb) =>
-            qb.equal(parentAttr, document.getId()),
-          )
-        ).map((doc) => doc.get(childAttr));
+      const relatedIds = (
+        await db.system().find(junctionCollection, (qb) =>
+          qb.equal(parentAttr, document.getId()),
+        )
+      ).map((doc) => doc.get(childAttr));
 
-        await db.deleteDocuments(junctionCollection, [
-          Query.equal(parentAttr, [document.getId()]),
-        ]);
+      await db.system().deleteDocuments(junctionCollection, [
+        Query.equal(parentAttr, [document.getId()]),
+      ]);
 
-        relatedIds.length &&
-          (await db.deleteDocuments(relatedCollection.getId(), (qb) =>
+      relatedIds.length &&
+        (await db
+          .system()
+          .deleteDocuments(relatedCollection.getId(), (qb) =>
             qb.equal("$id", ...relatedIds),
           ));
-      });
     }
     return;
   }
@@ -585,12 +568,10 @@ export async function handleOnDelete(
   if (!targetCollectionId || !targetField) return;
 
   if (onDelete === OnDelete.Restrict) {
-    const count = await Authorization.skip(() =>
-      db.count(
-        targetCollectionId,
-        [Query.equal(targetField, [document.getId()])],
-        1,
-      ),
+    const count = await db.system().count(
+      targetCollectionId,
+      [Query.equal(targetField, [document.getId()])],
+      1,
     );
     if (count > 0) {
       throw new RelationshipException(
@@ -598,17 +579,15 @@ export async function handleOnDelete(
       );
     }
   } else if (onDelete === OnDelete.SetNull) {
-    await Authorization.skip(() =>
-      db.updateDocuments(targetCollectionId, new Doc({ [targetField]: null }), [
-        Query.equal(targetField, [document.getId()]),
-      ]),
+    await db.system().updateDocuments(
+      targetCollectionId,
+      new Doc({ [targetField]: null }),
+      [Query.equal(targetField, [document.getId()])],
     );
   } else if (onDelete === OnDelete.Cascade) {
     // Internal maintenance: see Cascade comment above.
-    await Authorization.skip(() =>
-      db.deleteDocuments(targetCollectionId, (qb) =>
-        qb.equal(targetField, document.getId()),
-      ),
+    await db.system().deleteDocuments(targetCollectionId, (qb) =>
+      qb.equal(targetField, document.getId()),
     );
   }
 }

@@ -15,6 +15,7 @@ import { Attribute, Index } from "@validators/schema.js";
 
 describe("Query Operations", () => {
   let db: Database;
+  let system: ReturnType<Database["system"]>;
   let testCollectionId: string;
   let testDocuments: Doc<any>[];
 
@@ -24,6 +25,7 @@ describe("Query Operations", () => {
     db = createTestDb({ namespace: `coll_op_${schema}` });
     db.setMeta({ schema });
     await db.create();
+    system = db.system();
   });
 
   beforeEach(async () => {
@@ -282,7 +284,7 @@ describe("Query Operations", () => {
       },
     ];
 
-    testDocuments = await db.createDocuments(
+    testDocuments = await system.createDocuments(
       testCollectionId,
       documentsData.map((data) => new Doc(data)),
     );
@@ -294,7 +296,7 @@ describe("Query Operations", () => {
 
   describe("find", () => {
     test("should find all documents without query", async () => {
-      const documents = await db.find(testCollectionId);
+      const documents = await system.find(testCollectionId);
 
       expect(documents).toHaveLength(10);
       documents.forEach((doc) => {
@@ -304,7 +306,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with equal filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.equal("department", ["Engineering"]),
       ]);
 
@@ -315,7 +317,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with multiple values in equal filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.equal("department", ["Engineering", "Marketing"]),
       ]);
 
@@ -323,7 +325,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with not equal filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.notEqual("department", "Sales"),
       ]);
 
@@ -334,7 +336,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with greater than filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.greaterThan("age", 30),
       ]);
 
@@ -345,7 +347,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with greater than equal filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.greaterThanEqual("age", 30),
       ]);
 
@@ -356,7 +358,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with less than filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.lessThan("age", 30),
       ]);
 
@@ -367,7 +369,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with less than equal filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.lessThanEqual("age", 30),
       ]);
 
@@ -378,7 +380,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with between filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.between("age", 25, 35),
       ]);
 
@@ -391,7 +393,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with contains filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.contains("tags", ["javascript"]),
       ]);
 
@@ -403,7 +405,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with json filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.contains("meta->details->>hobbies", ["traveling"]),
       ]);
 
@@ -417,7 +419,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with startsWith filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.startsWith("name", "A"),
       ]);
 
@@ -428,7 +430,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with endsWith filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.endsWith("email", ".com"),
       ]);
 
@@ -440,7 +442,7 @@ describe("Query Operations", () => {
 
     test("should find documents with isNull filter", async () => {
       // First create a document with null value
-      await db.createDocument(
+      await system.createDocument(
         testCollectionId,
         new Doc({
           name: "Null Test",
@@ -448,7 +450,7 @@ describe("Query Operations", () => {
         }),
       );
 
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.isNull("email"),
       ]);
 
@@ -459,7 +461,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with isNotNull filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.isNotNull("email"),
       ]);
 
@@ -470,7 +472,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with search filter", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.search("name", "Alice"),
       ]);
 
@@ -478,17 +480,17 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with limit", async () => {
-      const documents = await db.find(testCollectionId, [Query.limit(5)]);
+      const documents = await system.find(testCollectionId, [Query.limit(5)]);
 
       expect(documents).toHaveLength(5);
     });
 
     test("should find documents with offset", async () => {
-      const allDocuments = await db.find(testCollectionId, [
+      const allDocuments = await system.find(testCollectionId, [
         Query.orderAsc("name"),
       ]);
 
-      const offsetDocuments = await db.find(testCollectionId, [
+      const offsetDocuments = await system.find(testCollectionId, [
         Query.orderAsc("name"),
         Query.offset(3),
       ]);
@@ -500,7 +502,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with orderAsc", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.orderAsc("age"),
       ]);
 
@@ -512,7 +514,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with orderDesc", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.orderDesc("age"),
       ]);
 
@@ -524,7 +526,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with select fields", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.select(["name", "age"]),
         Query.limit(3),
       ]);
@@ -539,14 +541,14 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with cursor pagination", async () => {
-      const firstBatch = await db.find(testCollectionId, [
+      const firstBatch = await system.find(testCollectionId, [
         Query.orderAsc("name"),
         Query.limit(5),
       ]);
 
       expect(firstBatch).toHaveLength(5);
 
-      const secondBatch = await db.find(testCollectionId, [
+      const secondBatch = await system.find(testCollectionId, [
         Query.orderAsc("name"),
         Query.cursorAfter(firstBatch[4]!),
         Query.limit(5),
@@ -561,7 +563,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents with complex query combinations", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.equal("department", ["Engineering"]),
         Query.greaterThan("age", 25),
         Query.lessThan("score", 95),
@@ -587,7 +589,7 @@ describe("Query Operations", () => {
     });
 
     test("should find documents using QueryBuilder", async () => {
-      const documents = await db.find(testCollectionId, (qb) =>
+      const documents = await system.find(testCollectionId, (qb) =>
         qb
           .equal("department", "Engineering")
           .greaterThan("age", 25)
@@ -605,7 +607,7 @@ describe("Query Operations", () => {
     });
 
     test("should handle empty result sets", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.equal("name", ["Non Existent Person"]),
       ]);
 
@@ -613,11 +615,11 @@ describe("Query Operations", () => {
     });
 
     test("should handle boolean filters", async () => {
-      const activeDocuments = await db.find(testCollectionId, [
+      const activeDocuments = await system.find(testCollectionId, [
         Query.equal("active", [true]),
       ]);
 
-      const inactiveDocuments = await db.find(testCollectionId, [
+      const inactiveDocuments = await system.find(testCollectionId, [
         Query.equal("active", [false]),
       ]);
 
@@ -635,14 +637,14 @@ describe("Query Operations", () => {
 
   describe("findOne", () => {
     test("should find single document without query", async () => {
-      const document = await db.findOne(testCollectionId);
+      const document = await system.findOne(testCollectionId);
 
       expect(document.empty()).toBe(false);
       expect(document.getId()).toBeDefined();
     });
 
     test("should find single document with query", async () => {
-      const document = await db.findOne(testCollectionId, [
+      const document = await system.findOne(testCollectionId, [
         Query.equal("department", ["Engineering"]),
         Query.orderAsc("age"),
       ]);
@@ -652,7 +654,7 @@ describe("Query Operations", () => {
     });
 
     test("should return empty doc when no match found", async () => {
-      const document = await db.findOne(testCollectionId, [
+      const document = await system.findOne(testCollectionId, [
         Query.equal("name", ["Non Existent"]),
       ]);
 
@@ -660,14 +662,14 @@ describe("Query Operations", () => {
     });
 
     test("should find first document with ordering", async () => {
-      const document = await db.findOne(testCollectionId, [
+      const document = await system.findOne(testCollectionId, [
         Query.orderAsc("age"),
       ]);
 
       expect(document.empty()).toBe(false);
 
       // Should be the youngest person
-      const allDocuments = await db.find(testCollectionId, [
+      const allDocuments = await system.find(testCollectionId, [
         Query.orderAsc("age"),
       ]);
 
@@ -675,7 +677,7 @@ describe("Query Operations", () => {
     });
 
     test("should work with QueryBuilder", async () => {
-      const document = await db.findOne(testCollectionId, (qb) =>
+      const document = await system.findOne(testCollectionId, (qb) =>
         qb.equal("active", true).orderDesc("score"),
       );
 
@@ -686,12 +688,12 @@ describe("Query Operations", () => {
 
   describe("count", () => {
     test("should count all documents", async () => {
-      const count = await db.count(testCollectionId);
+      const count = await system.count(testCollectionId);
       expect(count).toBe(10);
     });
 
     test("should count with filters", async () => {
-      const count = await db.count(testCollectionId, [
+      const count = await system.count(testCollectionId, [
         Query.equal("department", ["Engineering"]),
       ]);
 
@@ -699,7 +701,7 @@ describe("Query Operations", () => {
     });
 
     test("should count with complex filters", async () => {
-      const count = await db.count(testCollectionId, [
+      const count = await system.count(testCollectionId, [
         Query.equal("active", [true]),
         Query.greaterThan("age", 25),
       ]);
@@ -709,12 +711,12 @@ describe("Query Operations", () => {
     });
 
     test("should respect max parameter", async () => {
-      const count = await db.count(testCollectionId, [], 5);
+      const count = await system.count(testCollectionId, [], 5);
       expect(count).toBeLessThanOrEqual(5);
     });
 
     test("should count with QueryBuilder", async () => {
-      const count = await db.count(testCollectionId, (qb) =>
+      const count = await system.count(testCollectionId, (qb) =>
         qb.equal("department", "Engineering").equal("active", true),
       );
 
@@ -722,7 +724,7 @@ describe("Query Operations", () => {
     });
 
     test("should return 0 for no matches", async () => {
-      const count = await db.count(testCollectionId, [
+      const count = await system.count(testCollectionId, [
         Query.equal("name", ["Non Existent"]),
       ]);
 
@@ -732,32 +734,32 @@ describe("Query Operations", () => {
 
   describe("sum", () => {
     test("should sum numeric attribute", async () => {
-      const sum = await db.sum(testCollectionId, "age");
+      const sum = await system.sum(testCollectionId, "age");
 
       expect(sum).toBeGreaterThan(0);
       expect(typeof sum).toBe("number");
     });
 
     test("should sum with filters", async () => {
-      const engineeringSum = await db.sum(testCollectionId, "age", [
+      const engineeringSum = await system.sum(testCollectionId, "age", [
         Query.equal("department", ["Engineering"]),
       ]);
 
-      const allSum = await db.sum(testCollectionId, "age");
+      const allSum = await system.sum(testCollectionId, "age");
 
       expect(engineeringSum).toBeGreaterThan(0);
       expect(engineeringSum).toBeLessThan(allSum);
     });
 
     test("should sum float values", async () => {
-      const sum = await db.sum(testCollectionId, "score");
+      const sum = await system.sum(testCollectionId, "score");
 
       expect(sum).toBeGreaterThan(0);
       expect(typeof sum).toBe("number");
     });
 
     test("should sum with complex filters", async () => {
-      const sum = await db.sum(testCollectionId, "score", [
+      const sum = await system.sum(testCollectionId, "score", [
         Query.equal("active", [true]),
         Query.greaterThan("age", 25),
       ]);
@@ -766,14 +768,14 @@ describe("Query Operations", () => {
     });
 
     test("should respect max parameter", async () => {
-      const sumWithMax = await db.sum(testCollectionId, "age", [], 3);
-      const sumWithoutMax = await db.sum(testCollectionId, "age");
+      const sumWithMax = await system.sum(testCollectionId, "age", [], 3);
+      const sumWithoutMax = await system.sum(testCollectionId, "age");
 
       expect(sumWithMax).toBeLessThanOrEqual(sumWithoutMax);
     });
 
     test("should work with QueryBuilder", async () => {
-      const sum = await db.sum(testCollectionId, "score", (qb) =>
+      const sum = await system.sum(testCollectionId, "score", (qb) =>
         qb.equal("department", "Engineering").equal("active", true),
       );
 
@@ -781,7 +783,7 @@ describe("Query Operations", () => {
     });
 
     test("should return 0 for no matches", async () => {
-      const sum = await db.sum(testCollectionId, "age", [
+      const sum = await system.sum(testCollectionId, "age", [
         Query.equal("name", ["Non Existent"]),
       ]);
 
@@ -791,12 +793,12 @@ describe("Query Operations", () => {
 
   describe("edge cases", () => {
     test("should handle queries on non-existent collection", async () => {
-      await expect(db.find("non_existent_collection")).rejects.toThrow();
+      await expect(system.find("non_existent_collection")).rejects.toThrow();
     });
 
     test("should handle queries with invalid attribute names", async () => {
       await expect(
-        db.find(testCollectionId, [
+        system.find(testCollectionId, [
           Query.equal("invalid_attribute", ["value"]),
         ]),
       ).rejects.toThrow();
@@ -814,16 +816,16 @@ describe("Query Operations", () => {
           }),
       );
 
-      await db.createDocuments(testCollectionId, largeDataSet);
+      await system.createDocuments(testCollectionId, largeDataSet);
 
-      const documents = await db.find(testCollectionId, [Query.limit(50)]);
+      const documents = await system.find(testCollectionId, [Query.limit(50)]);
 
       expect(documents).toHaveLength(50);
     });
 
     test("should handle concurrent queries", async () => {
       const queries = Array.from({ length: 5 }, (_, i) =>
-        db.find(testCollectionId, [
+        system.find(testCollectionId, [
           Query.equal("department", ["Engineering"]),
           Query.limit(i + 1),
         ]),
@@ -837,7 +839,7 @@ describe("Query Operations", () => {
     });
 
     test("should handle complex nested queries", async () => {
-      const documents = await db.find(testCollectionId, [
+      const documents = await system.find(testCollectionId, [
         Query.or([
           Query.equal("department", ["Engineering"]),
           Query.greaterThan("age", 30),

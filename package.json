@@ -1,6 +1,6 @@
 {
   "name": "@nuvix/db",
-  "version": "0.3.0",
+  "version": "1.0.0-alpha.1",
   "description": "Modular and performant open source database library for Nuvix, with internal complexity abstracted from developers.",
   "license": "BSD-3-Clause",
   "type": "module",

@@ -14,6 +14,7 @@ import {
 
 describe("Relationship Operations", () => {
   let db: Database;
+  let system: ReturnType<Database["system"]>;
   let usersCollectionId: string;
   let postsCollectionId: string;
   let tagsCollectionId: string;
@@ -24,6 +25,7 @@ describe("Relationship Operations", () => {
     db = createTestDb({ namespace: `coll_op_${schema}` });
     db.setMeta({ schema });
     await db.create();
+    system = db.system();
 
     const timestamp = Date.now();
     usersCollectionId = `users_${timestamp}`;
@@ -578,7 +580,7 @@ describe("Relationship Operations", () => {
 
     test("should create documents with relationship data", async () => {
       // Create a user
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "John Doe",
@@ -587,7 +589,7 @@ describe("Relationship Operations", () => {
       );
 
       // Create a post with author relationship
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "My First Post",
@@ -595,7 +597,7 @@ describe("Relationship Operations", () => {
           author: user.getId(),
         }),
       );
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("*"),
@@ -605,7 +607,7 @@ describe("Relationship Operations", () => {
 
     test("should handle relationship queries with populate", async () => {
       // Create test data
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Jane Smith",
@@ -613,7 +615,7 @@ describe("Relationship Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Jane's Post",
@@ -623,7 +625,7 @@ describe("Relationship Operations", () => {
       );
 
       // Query with populate
-      const populatedPost = await db.getDocument(
+      const populatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         [Query.populate("author", [])],
@@ -647,7 +649,7 @@ describe("Relationship Operations", () => {
       });
 
       // Create test data
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Test User",
@@ -655,7 +657,7 @@ describe("Relationship Operations", () => {
         }),
       );
 
-      const post1 = await db.createDocument(
+      const post1 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 1",
@@ -663,7 +665,7 @@ describe("Relationship Operations", () => {
         }),
       );
 
-      const post2 = await db.createDocument(
+      const post2 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 2",
@@ -672,14 +674,14 @@ describe("Relationship Operations", () => {
       );
 
       // Delete user (should cascade to posts)
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Posts should be deleted too
-      const remainingPost1 = await db.getDocument(
+      const remainingPost1 = await system.getDocument(
         postsCollectionId,
         post1.getId(),
       );
-      const remainingPost2 = await db.getDocument(
+      const remainingPost2 = await system.getDocument(
         postsCollectionId,
         post2.getId(),
       );
@@ -690,7 +692,7 @@ describe("Relationship Operations", () => {
 
     test("should handle restrict deletion", async () => {
       // Default is restrict
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Protected User",
@@ -698,7 +700,7 @@ describe("Relationship Operations", () => {
         }),
       );
 
-      await db.createDocument(
+      await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Protected Post",
@@ -708,7 +710,7 @@ describe("Relationship Operations", () => {
 
       // Should not be able to delete user with related posts
       await expect(
-        db.deleteDocument(usersCollectionId, user.getId()),
+        system.deleteDocument(usersCollectionId, user.getId()),
       ).rejects.toThrow(RelationshipException);
     });
 
@@ -720,7 +722,7 @@ describe("Relationship Operations", () => {
         onDelete: OnDelete.SetNull,
       });
 
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Nullable User",
@@ -728,7 +730,7 @@ describe("Relationship Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Orphaned Post",
@@ -737,10 +739,10 @@ describe("Relationship Operations", () => {
       );
 
       // Delete user
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Post should still exist but author should be null
-      const orphanedPost = await db.getDocument(
+      const orphanedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
       );

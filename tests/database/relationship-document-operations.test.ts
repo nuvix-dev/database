@@ -9,6 +9,7 @@ import { RelationshipException } from "@errors/index.js";
 
 describe("Relationship Document Operations", () => {
   let db: Database;
+  let system: ReturnType<Database["system"]>;
   let usersCollectionId: string;
   let postsCollectionId: string;
   let tagsCollectionId: string;
@@ -20,6 +21,7 @@ describe("Relationship Document Operations", () => {
     db = createTestDb({ namespace: `rel_doc_op_${schema}` });
     db.setMeta({ schema });
     await db.create();
+    system = db.system();
 
     const timestamp = Date.now();
     usersCollectionId = `users_${timestamp}`;
@@ -125,7 +127,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with OneToOne relationship using documentId", async () => {
       // Create a user
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "John Doe",
@@ -134,7 +136,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create a profile post linked to the user
-      const profile = await db.createDocument(
+      const profile = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "John's Profile",
@@ -143,7 +145,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedProfile = await db.getDocument(
+      const updatedProfile = await system.getDocument(
         postsCollectionId,
         profile.getId(),
         (qb) => qb.populate("*"),
@@ -152,7 +154,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedProfile.get("user")?.getId()).toBe(user.getId());
 
       // Verify two-way relationship
-      const userWithProfile = await db.getDocument(
+      const userWithProfile = await system.getDocument(
         usersCollectionId,
         user.getId(),
         [Query.populate("profile", [])],
@@ -162,7 +164,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with OneToOne relationship set to null", async () => {
       // Create a post without user relationship
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Orphaned Post",
@@ -176,7 +178,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update OneToOne relationship to different document", async () => {
       // Create users and posts
-      const user1 = await db.createDocument(
+      const user1 = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "User 1",
@@ -184,7 +186,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const user2 = await db.createDocument(
+      const user2 = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "User 2",
@@ -192,7 +194,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Shared Post",
@@ -202,7 +204,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Update relationship to user2
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -210,7 +212,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("*"),
@@ -219,7 +221,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("user")?.getId()).toBe(user2.getId());
 
       // Verify old relationship is cleared
-      const user1WithProfile = await db.getDocument(
+      const user1WithProfile = await system.getDocument(
         usersCollectionId,
         user1.getId(),
         [Query.populate("profile", [])],
@@ -229,7 +231,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update OneToOne relationship to null", async () => {
       // Create user and post
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "User",
@@ -237,7 +239,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "User Post",
@@ -247,7 +249,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Update relationship to null
-      const updatedPost = await db.updateDocument(
+      const updatedPost = await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -258,7 +260,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("user")).toBeNull();
 
       // Verify user's profile is cleared
-      const userWithProfile = await db.getDocument(
+      const userWithProfile = await system.getDocument(
         usersCollectionId,
         user.getId(),
         [Query.populate("profile", [])],
@@ -275,7 +277,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user and profile
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Protected User",
@@ -283,7 +285,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.createDocument(
+      await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Protected Profile",
@@ -294,7 +296,7 @@ describe("Relationship Document Operations", () => {
 
       // Should not be able to delete user with related profile
       await expect(
-        db.deleteDocument(usersCollectionId, user.getId()),
+        system.deleteDocument(usersCollectionId, user.getId()),
       ).rejects.toThrow(RelationshipException);
     });
 
@@ -307,7 +309,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user and profile
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Cascade User",
@@ -315,7 +317,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const profile = await db.createDocument(
+      const profile = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Cascade Profile",
@@ -325,10 +327,10 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete user (should cascade to profile)
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Profile should be deleted
-      const deletedProfile = await db.getDocument(
+      const deletedProfile = await system.getDocument(
         postsCollectionId,
         profile.getId(),
       );
@@ -344,7 +346,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user and profile
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "SetNull User",
@@ -352,7 +354,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const profile = await db.createDocument(
+      const profile = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "SetNull Profile",
@@ -362,10 +364,10 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete user
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Profile should still exist but user should be null
-      const orphanedProfile = await db.getDocument(
+      const orphanedProfile = await system.getDocument(
         postsCollectionId,
         profile.getId(),
       );
@@ -389,7 +391,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with OneToMany relationship using {set: [...ids]}", async () => {
       // Create user
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -398,7 +400,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create posts
-      const post1 = await db.createDocument(
+      const post1 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 1",
@@ -406,7 +408,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post2 = await db.createDocument(
+      const post2 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 2",
@@ -414,7 +416,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post3 = await db.createDocument(
+      const post3 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 3",
@@ -424,7 +426,7 @@ describe("Relationship Document Operations", () => {
 
       // Update user to set posts relationship
       console.log(
-        await db.updateDocument(
+        await system.updateDocument(
           usersCollectionId,
           user.getId(),
           new Doc({
@@ -433,7 +435,7 @@ describe("Relationship Document Operations", () => {
         ),
       );
 
-      let updatedUser = await db.getDocument(
+      let updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts"),
@@ -443,7 +445,7 @@ describe("Relationship Document Operations", () => {
         [post1.getId(), post2.getId()],
       );
 
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -451,7 +453,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      updatedUser = await db.getDocument(
+      updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts"),
@@ -464,7 +466,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with OneToMany relationship using empty set", async () => {
       // Create user with no posts
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -472,7 +474,7 @@ describe("Relationship Document Operations", () => {
           posts: { set: [] }, // Empty set
         }),
       );
-      const updatedUser = await db.getDocument(
+      const updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts"),
@@ -482,7 +484,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update OneToMany relationship with {set: []}", async () => {
       // Create user with posts
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -490,7 +492,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post",
@@ -500,7 +502,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Clear all posts
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -508,7 +510,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedUser = await db.getDocument(
+      const updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts"),
@@ -517,7 +519,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedUser.get("posts")).toEqual([]);
 
       // Verify post's author is cleared
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("author"),
@@ -527,7 +529,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update OneToMany relationship with {connect: [], disconnect: []}", async () => {
       // Create user and posts
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -535,7 +537,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post1 = await db.createDocument(
+      const post1 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 1",
@@ -543,7 +545,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post2 = await db.createDocument(
+      const post2 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 2",
@@ -551,7 +553,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post3 = await db.createDocument(
+      const post3 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 3",
@@ -560,7 +562,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Connect posts
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -568,10 +570,10 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.getDocument(usersCollectionId, user.getId(), [
+      await system.getDocument(usersCollectionId, user.getId(), [
         Query.populate("posts", []),
       ]);
-      let updatedUser = await db.getDocument(
+      let updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts"),
@@ -579,7 +581,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedUser.get("posts")).toHaveLength(2);
 
       // Connect and disconnect
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -590,7 +592,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      updatedUser = await db.getDocument(usersCollectionId, user.getId(), [
+      updatedUser = await system.getDocument(usersCollectionId, user.getId(), [
         Query.populate("posts", []),
       ]);
       expect(updatedUser.get("posts")).toHaveLength(2);
@@ -609,7 +611,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user with posts
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Protected Author",
@@ -617,7 +619,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.createDocument(
+      await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Protected Post",
@@ -628,7 +630,7 @@ describe("Relationship Document Operations", () => {
 
       // Should not be able to delete user with related posts
       await expect(
-        db.deleteDocument(usersCollectionId, user.getId()),
+        system.deleteDocument(usersCollectionId, user.getId()),
       ).rejects.toThrow(RelationshipException);
     });
 
@@ -641,7 +643,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user with posts
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Cascade Author",
@@ -649,7 +651,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post1 = await db.createDocument(
+      const post1 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 1",
@@ -658,7 +660,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post2 = await db.createDocument(
+      const post2 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 2",
@@ -668,14 +670,14 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete user (should cascade to posts)
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Posts should be deleted
-      const deletedPost1 = await db.getDocument(
+      const deletedPost1 = await system.getDocument(
         postsCollectionId,
         post1.getId(),
       );
-      const deletedPost2 = await db.getDocument(
+      const deletedPost2 = await system.getDocument(
         postsCollectionId,
         post2.getId(),
       );
@@ -692,7 +694,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user with posts
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "SetNull Author",
@@ -700,7 +702,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post1 = await db.createDocument(
+      const post1 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 1",
@@ -709,7 +711,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post2 = await db.createDocument(
+      const post2 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 2",
@@ -719,14 +721,14 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete user
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Posts should still exist but author should be null
-      const orphanedPost1 = await db.getDocument(
+      const orphanedPost1 = await system.getDocument(
         postsCollectionId,
         post1.getId(),
       );
-      const orphanedPost2 = await db.getDocument(
+      const orphanedPost2 = await system.getDocument(
         postsCollectionId,
         post2.getId(),
       );
@@ -752,7 +754,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with ManyToOne relationship using documentId", async () => {
       // Create user
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -761,7 +763,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create post with author relationship
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post",
@@ -770,7 +772,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("*"),
@@ -779,7 +781,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("author")?.getId()).toBe(user.getId());
 
       // Verify two-way relationship
-      const userWithPosts = await db.getDocument(
+      const userWithPosts = await system.getDocument(
         usersCollectionId,
         user.getId(),
         [Query.populate("posts", [])],
@@ -789,7 +791,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with ManyToOne relationship set to null", async () => {
       // Create post without author
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Anonymous Post",
@@ -803,7 +805,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update ManyToOne relationship to different document", async () => {
       // Create users
-      const user1 = await db.createDocument(
+      const user1 = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author 1",
@@ -811,7 +813,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const user2 = await db.createDocument(
+      const user2 = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author 2",
@@ -820,7 +822,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create post with user1
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post",
@@ -830,7 +832,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Update to user2
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -838,7 +840,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("*"),
@@ -847,12 +849,12 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("author")?.getId()).toBe(user2.getId());
 
       // Verify relationships are updated
-      const user1WithPosts = await db.getDocument(
+      const user1WithPosts = await system.getDocument(
         usersCollectionId,
         user1.getId(),
         [Query.populate("posts", [])],
       );
-      const user2WithPosts = await db.getDocument(
+      const user2WithPosts = await system.getDocument(
         usersCollectionId,
         user2.getId(),
         [Query.populate("posts", [])],
@@ -863,7 +865,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update ManyToOne relationship to null", async () => {
       // Create user and post
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -871,7 +873,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post",
@@ -881,7 +883,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Update to null
-      const updatedPost = await db.updateDocument(
+      const updatedPost = await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -892,7 +894,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("author")).toBeNull();
 
       // Verify user's posts are updated
-      const userWithPosts = await db.getDocument(
+      const userWithPosts = await system.getDocument(
         usersCollectionId,
         user.getId(),
         [Query.populate("posts", [])],
@@ -909,7 +911,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user and post
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Protected Author",
@@ -917,7 +919,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.createDocument(
+      await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Protected Post",
@@ -928,7 +930,7 @@ describe("Relationship Document Operations", () => {
 
       // Should not be able to delete user with related posts
       await expect(
-        db.deleteDocument(usersCollectionId, user.getId()),
+        system.deleteDocument(usersCollectionId, user.getId()),
       ).rejects.toThrow(RelationshipException);
     });
 
@@ -941,7 +943,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user and post
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Cascade Author",
@@ -949,7 +951,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Cascade Post",
@@ -959,10 +961,10 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete user (should cascade to post)
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Post should be deleted
-      const deletedPost = await db.getDocument(postsCollectionId, post.getId());
+      const deletedPost = await system.getDocument(postsCollectionId, post.getId());
       expect(deletedPost.empty()).toBe(true);
     });
 
@@ -975,7 +977,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user and post
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "SetNull Author",
@@ -983,7 +985,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "SetNull Post",
@@ -993,10 +995,10 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete user
-      await db.deleteDocument(usersCollectionId, user.getId());
+      await system.deleteDocument(usersCollectionId, user.getId());
 
       // Post should still exist but author should be null
-      const orphanedPost = await db.getDocument(
+      const orphanedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
       );
@@ -1020,7 +1022,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with ManyToMany relationship using {set: [...ids]}", async () => {
       // Create post
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Tagged Post",
@@ -1029,7 +1031,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create tags
-      const tag1 = await db.createDocument(
+      const tag1 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "JavaScript",
@@ -1037,7 +1039,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag2 = await db.createDocument(
+      const tag2 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "TypeScript",
@@ -1046,7 +1048,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Update post to set tags relationship
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1054,7 +1056,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("tags"),
@@ -1068,7 +1070,7 @@ describe("Relationship Document Operations", () => {
 
     test("should create documents with ManyToMany relationship using empty set", async () => {
       // Create post with no tags
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Untagged Post",
@@ -1077,7 +1079,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("tags"),
@@ -1088,7 +1090,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update ManyToMany relationship with {set: []}", async () => {
       // Create post with tags
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post",
@@ -1096,7 +1098,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag = await db.createDocument(
+      const tag = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Test Tag",
@@ -1105,7 +1107,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Set tags
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1114,14 +1116,14 @@ describe("Relationship Document Operations", () => {
       );
 
       // Clear all tags
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
           tags: { set: [] }, // Clear all relationships
         }),
       );
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("tags"),
@@ -1129,7 +1131,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("tags")).toEqual([]);
 
       // Verify tag's posts are cleared
-      const updatedTag = await db.getDocument(tagsCollectionId, tag.getId(), [
+      const updatedTag = await system.getDocument(tagsCollectionId, tag.getId(), [
         Query.populate("posts", []),
       ]);
       expect(updatedTag.get("posts")).toHaveLength(0);
@@ -1137,7 +1139,7 @@ describe("Relationship Document Operations", () => {
 
     test("should update ManyToMany relationship with {connect: [], disconnect: []}", async () => {
       // Create post and tags
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post",
@@ -1145,7 +1147,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag1 = await db.createDocument(
+      const tag1 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 1",
@@ -1153,7 +1155,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag2 = await db.createDocument(
+      const tag2 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 2",
@@ -1161,7 +1163,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag3 = await db.createDocument(
+      const tag3 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 3",
@@ -1170,7 +1172,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Connect tags
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1178,13 +1180,13 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      let updatedPost = await db.getDocument(postsCollectionId, post.getId(), [
+      let updatedPost = await system.getDocument(postsCollectionId, post.getId(), [
         Query.populate("tags", []),
       ]);
       expect(updatedPost.get("tags")).toHaveLength(2);
 
       // Connect and disconnect
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1195,7 +1197,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      updatedPost = await db.getDocument(postsCollectionId, post.getId(), [
+      updatedPost = await system.getDocument(postsCollectionId, post.getId(), [
         Query.populate("tags", []),
       ]);
       expect(updatedPost.get("tags")).toHaveLength(2);
@@ -1214,7 +1216,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create post with tags
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Protected Post",
@@ -1222,7 +1224,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag = await db.createDocument(
+      const tag = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Protected Tag",
@@ -1230,7 +1232,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1240,7 +1242,7 @@ describe("Relationship Document Operations", () => {
 
       // Should not be able to delete post with related tags
       await expect(
-        db.deleteDocument(postsCollectionId, post.getId()),
+        system.deleteDocument(postsCollectionId, post.getId()),
       ).rejects.toThrow(RelationshipException);
     });
 
@@ -1253,7 +1255,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create post with tags
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Cascade Post",
@@ -1261,7 +1263,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag1 = await db.createDocument(
+      const tag1 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 1",
@@ -1269,7 +1271,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag2 = await db.createDocument(
+      const tag2 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 2",
@@ -1277,7 +1279,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1286,11 +1288,11 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete post (should cascade to tags)
-      await db.deleteDocument(postsCollectionId, post.getId());
+      await system.deleteDocument(postsCollectionId, post.getId());
 
       // Tags should be deleted
-      const deletedTag1 = await db.getDocument(tagsCollectionId, tag1.getId());
-      const deletedTag2 = await db.getDocument(tagsCollectionId, tag2.getId());
+      const deletedTag1 = await system.getDocument(tagsCollectionId, tag1.getId());
+      const deletedTag2 = await system.getDocument(tagsCollectionId, tag2.getId());
       expect(deletedTag1.empty()).toBe(true);
       expect(deletedTag2.empty()).toBe(true);
     });
@@ -1304,7 +1306,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create post with tags
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "SetNull Post",
@@ -1312,7 +1314,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag1 = await db.createDocument(
+      const tag1 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 1",
@@ -1320,7 +1322,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag2 = await db.createDocument(
+      const tag2 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 2",
@@ -1328,7 +1330,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      await db.updateDocument(
+      await system.updateDocument(
         postsCollectionId,
         post.getId(),
         new Doc({
@@ -1337,15 +1339,15 @@ describe("Relationship Document Operations", () => {
       );
 
       // Delete post
-      await db.deleteDocument(postsCollectionId, post.getId());
+      await system.deleteDocument(postsCollectionId, post.getId());
 
       // Tags should still exist but posts should be cleared
-      const orphanedTag1 = await db.getDocument(
+      const orphanedTag1 = await system.getDocument(
         tagsCollectionId,
         tag1.getId(),
         [Query.populate("posts", [])],
       );
-      const orphanedTag2 = await db.getDocument(
+      const orphanedTag2 = await system.getDocument(
         tagsCollectionId,
         tag2.getId(),
         [Query.populate("posts", [])],
@@ -1385,7 +1387,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create documents
-      const author = await db.createDocument(
+      const author = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Author",
@@ -1393,7 +1395,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const reviewer = await db.createDocument(
+      const reviewer = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "Reviewer",
@@ -1401,7 +1403,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag = await db.createDocument(
+      const tag = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tech",
@@ -1410,7 +1412,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create post with multiple relationships
-      const post = await db.createDocument(
+      const post = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Complex Post",
@@ -1423,7 +1425,7 @@ describe("Relationship Document Operations", () => {
 
       console.log("Created Post:", post);
 
-      const updatedPost = await db.getDocument(
+      const updatedPost = await system.getDocument(
         postsCollectionId,
         post.getId(),
         (qb) => qb.populate("*"),
@@ -1456,7 +1458,7 @@ describe("Relationship Document Operations", () => {
       });
 
       // Create user
-      const user = await db.createDocument(
+      const user = await system.createDocument(
         usersCollectionId,
         new Doc({
           name: "User",
@@ -1465,7 +1467,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create posts
-      const post1 = await db.createDocument(
+      const post1 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 1",
@@ -1473,7 +1475,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post2 = await db.createDocument(
+      const post2 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 2",
@@ -1481,7 +1483,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const post3 = await db.createDocument(
+      const post3 = await system.createDocument(
         postsCollectionId,
         new Doc({
           title: "Post 3",
@@ -1490,7 +1492,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Create tags
-      const tag1 = await db.createDocument(
+      const tag1 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 1",
@@ -1498,7 +1500,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag2 = await db.createDocument(
+      const tag2 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 2",
@@ -1506,7 +1508,7 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      const tag3 = await db.createDocument(
+      const tag3 = await system.createDocument(
         tagsCollectionId,
         new Doc({
           name: "Tag 3",
@@ -1515,7 +1517,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Set initial posts and tags
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -1525,7 +1527,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Verify initial state
-      let updatedUser = await db.getDocument(
+      let updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts").populate("favorite_tags"),
@@ -1534,7 +1536,7 @@ describe("Relationship Document Operations", () => {
       expect(updatedUser.get("favorite_tags")).toHaveLength(2);
 
       // Update posts with connect/disconnect - favorite_tags should remain unchanged
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -1546,7 +1548,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Verify posts updated but favorite_tags unchanged
-      updatedUser = await db.getDocument(
+      updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts").populate("favorite_tags"),
@@ -1566,7 +1568,7 @@ describe("Relationship Document Operations", () => {
       expect(tagIds).toContain(tag2.getId());
 
       // Update favorite_tags with connect/disconnect - posts should remain unchanged
-      await db.updateDocument(
+      await system.updateDocument(
         usersCollectionId,
         user.getId(),
         new Doc({
@@ -1578,7 +1580,7 @@ describe("Relationship Document Operations", () => {
       );
 
       // Verify favorite_tags updated but posts unchanged
-      updatedUser = await db.getDocument(
+      updatedUser = await system.getDocument(
         usersCollectionId,
         user.getId(),
         (qb) => qb.populate("posts").populate("favorite_tags"),

@@ -1,7 +1,6 @@
 import { afterAll } from "bun:test";
 import { Adapter } from "@adapters/adapter.js";
 import { Database } from "@core/database.js";
-import { Authorization } from "@utils/authorization.js";
 import { Cache as NuvixCache, Redis } from "@nuvix/cache";
 
 const PG_URL =
@@ -74,6 +73,5 @@ export function createTestDb(
 ): Database {
   const adapter = createTestAdapter(meta);
   const cache = new NuvixCache(new Redis({}));
-  Authorization.setDefaultStatus(false); // disable auth by default in tests
   return new Database(adapter, cache);
 }

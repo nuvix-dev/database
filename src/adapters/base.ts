@@ -17,12 +17,20 @@ import { QueryBuilder } from "@utils/query-builder.js";
 import { Query, QueryType } from "@core/query.js";
 import { Entities, IEntity } from "types.js";
 import { Logger } from "@utils/logger.js";
-import { Authorization } from "@utils/authorization.js";
+import { AuthContext } from "@core/auth.js";
 import { Collection, RelationOptions } from "@validators/schema.js";
 import type { DatabaseError } from "./postgres.js";
 import { OrderException } from "@errors/index.js";
 import { EventEmitter } from "node:events";
 import type { PostgresClient, Transaction } from "./postgres.js";
+
+/**
+ * Local mirror of core/auth's private isSystemContext predicate. Declared here
+ * (rather than exported from @core/auth.js) to keep this subtask's diff surface
+ * limited to the adapter layer.
+ */
+const isSystemContext = (ctx: AuthContext): boolean =>
+  "system" in ctx && ctx.system === true;
 
 export abstract class BaseAdapter extends EventEmitter {
   public readonly type: string = "base";
@@ -243,18 +251,21 @@ export abstract class BaseAdapter extends EventEmitter {
    * Retrieves a document from the specified collection by its ID.
    */
   public async getDocument<C extends string & keyof Entities>(
+    ctx: AuthContext,
     collection: C,
     id: string,
     queries?: ProcessedQuery | null,
     forUpdate?: boolean,
   ): Promise<Doc<Entities[C]>>;
   public async getDocument<C extends Record<string, any>>(
+    ctx: AuthContext,
     collection: string,
     id: string,
     queries?: ProcessedQuery | null,
     forUpdate?: boolean,
   ): Promise<Doc<Partial<IEntity> & C>>;
   public async getDocument(
+    ctx: AuthContext,
     collection: string,
     id: string,
     { selections }: ProcessedQuery,
@@ -300,6 +311,7 @@ export abstract class BaseAdapter extends EventEmitter {
    * Deletes a document from the specified collection by its ID.
    */
   public async deleteDocument(
+    ctx: AuthContext,
     collection: string,
     document: Doc<any>,
   ): Promise<boolean> {
@@ -401,12 +413,13 @@ export abstract class BaseAdapter extends EventEmitter {
    * Counts the number of documents in a collection based on the provided queries.
    */
   public async count(
+    ctx: AuthContext,
     collection: string,
     queries: ((b: QueryBuilder) => QueryBuilder) | Array<Query> = [],
     max?: number,
   ): Promise<number> {
     const name = this.sanitize(collection);
-    const roles = Authorization.getRoles();
+    const roles = [...ctx.roles];
     const params: any[] = [];
     const where: string[] = [];
     const alias = Query.DEFAULT_ALIAS;
@@ -422,7 +435,7 @@ export abstract class BaseAdapter extends EventEmitter {
       where.push(conditions);
     }
 
-    if (Authorization.getStatus()) {
+    if (!isSystemContext(ctx)) {
       where.push(
         this.getSQLPermissionsCondition({
           collection: name,
@@ -474,13 +487,14 @@ export abstract class BaseAdapter extends EventEmitter {
    * Sums a specific attribute across documents in a collection.
    */
   public async sum(
+    ctx: AuthContext,
     collection: string,
     attribute: string,
     queries: ((b: QueryBuilder) => QueryBuilder) | Array<Query> = [],
     max?: number,
   ): Promise<number> {
     const name = this.sanitize(collection);
-    const roles = Authorization.getRoles();
+    const roles = [...ctx.roles];
     const params: any[] = [];
     const where: string[] = [];
     const alias = Query.DEFAULT_ALIAS;
@@ -496,7 +510,7 @@ export abstract class BaseAdapter extends EventEmitter {
       where.push(conditions);
     }
 
-    if (Authorization.getStatus()) {
+    if (!isSystemContext(ctx)) {
       where.push(
         this.getSQLPermissionsCondition({
           collection: name,
@@ -952,7 +966,7 @@ export abstract class BaseAdapter extends EventEmitter {
     type = PermissionEnum.Read,
   }: {
     collection: string;
-    roles: string[];
+    roles: readonly string[];
     alias: string;
     type?: PermissionEnum;
   }): string {
@@ -1349,8 +1363,10 @@ export abstract class BaseAdapter extends EventEmitter {
     query: ProcessedQuery,
     {
       forPermission,
+      ctx,
     }: {
       forPermission: PermissionEnum;
+      ctx: AuthContext;
     },
   ): {
     sql: string;
@@ -1385,6 +1401,7 @@ export abstract class BaseAdapter extends EventEmitter {
       selections,
       ...options,
       forPermission,
+      ctx,
     });
     let orderSql = "";
 
@@ -1435,11 +1452,13 @@ export abstract class BaseAdapter extends EventEmitter {
     tableAlias,
     depth = 0,
     forPermission,
+    ctx,
     ...rest
   }: (ProcessedQuery | PopulateQuery) & {
     tableAlias?: string;
     depth: number;
     forPermission: PermissionEnum;
+    ctx: AuthContext;
   }) {
     const conditions: string[] = [];
     const selectionsSql: string[] = [];
@@ -1471,15 +1490,14 @@ export abstract class BaseAdapter extends EventEmitter {
 
     if (
       tableAlias === "main" &&
-      Authorization.getStatus() &&
+      !isSystemContext(ctx) &&
       !skipAuth &&
       collection.get("documentSecurity", false)
     ) {
-      const roles = Authorization.getRoles();
       conditions.push(
         this.getSQLPermissionsCondition({
           collection: collection.getId(),
-          roles,
+          roles: [...ctx.roles],
           alias: tableAlias,
           type: forPermission,
         }),
@@ -1562,15 +1580,14 @@ export abstract class BaseAdapter extends EventEmitter {
         );
 
         if (
-          Authorization.getStatus() &&
+          !isSystemContext(ctx) &&
           !rest.skipAuth &&
           rest.collection.get("documentSecurity", false)
         ) {
-          const roles = Authorization.getRoles();
           joins.push(
             `AND ${this.getSQLPermissionsCondition({
               collection: relatedTableName,
-              roles,
+              roles: [...ctx.roles],
               alias: relationAlias,
               type: forPermission,
             })}`,
@@ -1590,6 +1607,7 @@ export abstract class BaseAdapter extends EventEmitter {
         depth: depth + 1,
         tableAlias: relationAlias,
         forPermission,
+        ctx,
       });
 
       // Prefix the selections to avoid conflicts
@@ -2023,16 +2041,18 @@ export abstract class BaseAdapter extends EventEmitter {
 
   public async transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> {
     return await this.client.transaction(async (newClient) => {
-      // If it's a nested call, newClient is the same Transaction instance
+      // Nested call: Transaction.savepoint() reuses this same client
+      // instance, so keep operating on the current adapter (savepoint
+      // semantics).
       if (this.client === newClient) {
         return await callback(this);
       }
 
-      // If it's the first call, we clone the adapter
-      const txAdapter = Object.create(Object.getPrototypeOf(this));
-      Object.assign(txAdapter, this);
-      txAdapter.client = newClient;
-      return await callback(txAdapter);
+      // First call: construct a real adapter bound to the transaction
+      // client. Unlike a prototype clone, the scoped adapter owns its
+      // mutable state (metadata, transformations), so concurrent
+      // transactions cannot leak state into each other.
+      return await callback(this.createTransactionAdapter(newClient));
     });
   }
 
