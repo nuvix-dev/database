@@ -10,18 +10,18 @@ connection pool is Bun's built-in `SQL` client (Bun >= 1.4 required).
 ```
 Application code
       │
- ┌────▼─────┐        ┌─────────────────────────────────┐
- │ Database │ ─────▶ │ CacheDriver                     │
- │ (facade) │        │ (@nuvix/cache Memory/Redis,     │
- └────┬─────┘        │  or any structurally-compatible │
-      │              │  4-method implementation)       │
-      │ encode / validate / authorize / populate
- ┌────▼───────────┐
- │  BaseAdapter   │ SQL generation, tenancy, permission predicates
- └────┬───────────┘
- ┌────▼───────────┐
- │    Adapter     │ PostgreSQL DDL/DML: tables, indexes, _perms tables
- └────┬───────────┘
+ ┌────▼──────────────┐   ┌─────────────────────────────────┐
+ │ Database / Session│──▶│ CacheDriver                     │
+ │ public facades    │   │ (@nuvix/cache or compatible)    │
+ └────┬──────────────┘   └─────────────────────────────────┘
+      │
+ ┌────▼─────────────────────────────┐
+ │ SchemaManager / DocumentStore    │ validation, authorization, population
+ └────┬─────────────────────────────┘
+ ┌────▼─────────────────────────────┐
+ │ BaseAdapter / Adapter            │ SQL execution and adapter facade
+ │ SqlBuilder / Ddl                 │ SQL construction and schema changes
+ └────┬─────────────────────────────┘
  ┌────▼──────────────┐
  │  PostgresClient   │ Bun SQL pool, ?→$n params, transactions
  └───────────────────┘
@@ -34,14 +34,17 @@ where each level adds exactly one concern:
 |---|---|---|
 | `Base` | `src/core/base.ts` | Document encode/decode through per-attribute filter pipelines, validation orchestration, relationship population of result rows, explicit `AuthContext` threading into encode/decode/populate/query processing, scoped execution (`silent()` scopes, tenant/schema overrides), transactional scope construction |
 | `Cache` | `src/core/cache.ts` | Cache-key scheme and tag-based purge helpers |
-| `Database` | `src/core/database.ts` | Public facade: collections, attributes, indexes, document CRUD, batched bulk operations, aggregations |
+| `Database` | `src/core/database.ts` | Public admin facade delegating schema operations to `SchemaManager`; creates scoped `Session` instances for document operations |
+| `Session` | `src/core/session.ts` | Public document facade bound to an immutable `AuthContext`; delegates CRUD, queries, bulk operations, and transactions to `DocumentStore` |
+| `SchemaManager` | `src/core/schema-manager.ts` | Collection, attribute, relationship, index, and database lifecycle implementation behind `Database` |
+| `DocumentStore` | `src/core/document-store.ts` | Document CRUD, query processing, validation, authorization, caching, population, and transaction implementation behind `Session` |
 
 ## Module map
 
 | Directory | Contents |
 |---|---|
-| `src/adapters/` | `Adapter` (concrete PostgreSQL DDL/DML), `BaseAdapter` (SQL building shared logic), `PostgresClient` (Bun `SQL` wrapper), `error-mapper` (SQLSTATE → typed errors) |
-| `src/core/` | `Database`/`Cache`/`Base`, `Session` (document plane), the immutable `AuthContext` model + pure `authorize()` (`auth.ts`), `Doc<T>` document wrapper, `Query`, `Emitter`, enums, relationship resolution, index manager |
+| `src/adapters/` | `Adapter` and `BaseAdapter` facades, `Ddl` for schema SQL, `SqlBuilder` for shared query construction, `PostgresClient` (Bun `SQL` wrapper), `error-mapper` (SQLSTATE → typed errors) |
+| `src/core/` | `Database` and `Session` facades, `SchemaManager`, `DocumentStore`, `Cache`/`Base`, the immutable `AuthContext` model + pure `authorize()` (`auth.ts`), `Doc<T>`, `Query`, `Emitter`, relationship resolution, index manager |
 | `src/validators/` | Schema definitions (`Attribute`, `Index`, `Collection`), document structure/permission validators, query validators (`filter`, `limit`, `offset`, `order`, `cursor`, `select`, `populate`), per-type value validators |
 | `src/utils/` | ID generation, permission/role helpers, fluent `QueryBuilder`, type generator |
 | `src/errors/` | Typed error hierarchy (`Authorization`, `Structure`, `Query`, `Conflict`, `Duplicate`, `NotFound`, `Timeout`, `Transaction`, …) |
@@ -49,6 +52,13 @@ where each level adds exactly one concern:
 | `src/config/` + `src/cli/` | Config loader and the `generate-types` CLI |
 
 Public API surface is defined entirely by `src/index.ts`.
+
+The decomposed collaborators are implementation details. `Database` delegates
+admin-plane calls to `SchemaManager`, `Session` reaches `DocumentStore` through
+the private `documentPlane` symbol, `BaseAdapter` delegates reusable query SQL
+to `SqlBuilder`, and `Adapter` delegates schema mutations to `Ddl`. These
+facades preserve the exported API while keeping state ownership and transaction
+scope in the existing public objects.
 
 ## Read path
 
@@ -140,7 +150,19 @@ This pipeline is why malformed or unindexed query shapes fail fast with typed er
 
 ## Type generation
 
-`generateTypes(collections, options)` (`src/utils/generate-types.ts`) emits a self-describing TypeScript file from collection metadata: a local `IEntity` interface plus a `Doc` import. `IEntity` is intentionally **not** imported from the package — emitting it locally avoids declaration conflicts (TS2440) while keeping generated files standalone.
+`generateTypes(collections, options)` (`src/utils/generate-types.ts`) emits a
+self-describing TypeScript file from collection metadata: a local `IEntity`
+interface, collection interfaces, `Doc` aliases, and an `Entities` map keyed by
+collection ID. The output also augments the public `@nuvix/db` `Entities`
+interface. Importing the generated file as a type opts a consumer into typed
+collection IDs, `Doc` results, and attribute-checked `QueryBuilder` callbacks.
+Without that import, the registry has no user collections and the existing
+string/untyped fallback remains available; widened runtime strings retain the
+fallback even when generated types are loaded.
+
+`IEntity` is intentionally **not** imported from the package. Emitting it
+locally avoids declaration conflicts (TS2440) while keeping generated files
+standalone.
 
 The CLI (`src/cli/generate-types.ts`) loads a `NuvixDBConfig` via `ConfigLoader`, which discovers the config file from the working directory and imports it as ESM or CJS.
 

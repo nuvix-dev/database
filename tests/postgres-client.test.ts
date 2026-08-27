@@ -145,7 +145,7 @@ describe("adapter transaction facade", () => {
   test("runs queries inside adapter.transaction via sql.begin", async () => {
     const result = await adapter.transaction(async (txAdapter) => {
       const { rows } = await txAdapter.$client.query("SELECT 1 AS one");
-      return rows[0]["one"];
+      return rows[0]!["one"];
     });
     expect(result).toBe(1);
   });

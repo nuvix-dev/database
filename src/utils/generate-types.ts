@@ -63,7 +63,7 @@ export function generateTypes(
   // emitted below so generated files are self-describing (importing it as well
   // would conflict with the local declaration).
   if (includeImports) {
-    const imports = `import { Doc } from "${packageName}";`;
+    const imports = `import type { Doc } from "${packageName}";`;
     parts.push(imports);
     parts.push(IENTITY_DEFINITION);
   }
@@ -121,7 +121,7 @@ export function generateTypes(
 
   // Entity map interface
   if (includeEntityMap) {
-    const entityMap = generateEntityMap(collections);
+    const entityMap = generateEntityMap(collections, packageName);
     parts.push(entityMap);
   }
 
@@ -321,7 +321,10 @@ function generateAttributeComment(attr: Attribute): string {
   return `    /**\n${comments.map((c) => `     * ${c}`).join("\n")}\n     */\n`;
 }
 
-function generateEntityMap(collections: Collection[]): string {
+function generateEntityMap(
+  collections: Collection[],
+  packageName: string,
+): string {
   const entityMapEntries = collections
     .map((col) => {
       const interfaceName = pascalCase(col.name);
@@ -329,7 +332,18 @@ function generateEntityMap(collections: Collection[]): string {
     })
     .join("\n");
 
-  return `export interface Entities {\n${entityMapEntries}\n}`;
+  return `export interface Entities {\n${entityMapEntries}\n}
+
+type GeneratedEntitiesRegistry = Entities;
+
+/**
+ * Opt-in integration: including or importing this generated file augments
+ * the package registry. Session APIs then infer collection IDs, documents,
+ * and query attributes while their arbitrary-string fallback remains intact.
+ */
+declare module ${JSON.stringify(packageName)} {
+  interface Entities extends GeneratedEntitiesRegistry {}
+}`;
 }
 
 function pascalCase(str: string): string {

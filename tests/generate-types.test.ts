@@ -175,7 +175,7 @@ describe("generateTypes", () => {
     // Regression: the emitted import must not include IEntity — a local
     // definition is emitted alongside it, and importing both would produce
     // TS2440 (import conflicts with local declaration).
-    expect(result).toContain(`import { Doc } from "@nuvix/db";`);
+    expect(result).toContain(`import type { Doc } from "@nuvix/db";`);
     expect(result).not.toContain("IEntity } from");
   });
 
@@ -378,6 +378,10 @@ describe("generateTypes", () => {
     expect(result).toContain("export interface Entities {");
     expect(result).toContain('"users": Users;');
     expect(result).toContain('"posts": Posts;');
+    expect(result).toContain('declare module "@nuvix/db"');
+    expect(result).toContain(
+      "interface Entities extends GeneratedEntitiesRegistry {}",
+    );
   });
 
   it("handles collections with no attributes", () => {
@@ -569,7 +573,7 @@ describe("generateTypes", () => {
 
       const result = generateTypes(collections);
 
-      expect(result).toContain('import { Doc } from "@nuvix/db";');
+      expect(result).toContain('import type { Doc } from "@nuvix/db";');
       expect(result).toContain("export type UsersDoc = Doc<Users>;");
       expect(result).toContain("export type PostsDoc = Doc<Posts>;");
     });
@@ -631,8 +635,16 @@ describe("generateTypes", () => {
       });
 
       expect(result).toContain(
-        'import { Doc } from "@custom/db-package";',
+        'import type { Doc } from "@custom/db-package";',
       );
+    });
+
+    it("targets the configured package for registry augmentation", () => {
+      const result = generateTypes([], {
+        packageName: "@custom/db-package",
+      });
+
+      expect(result).toContain('declare module "@custom/db-package"');
     });
 
     it("supports selective generation options", () => {

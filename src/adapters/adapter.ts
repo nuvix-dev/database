@@ -2,9 +2,7 @@ import type { SQL } from "bun";
 import { BaseAdapter } from "./base.js";
 import { PostgresClient, Transaction } from "./postgres.js";
 import {
-  AttributeEnum,
   EventsEnum,
-  IndexEnum,
   PermissionEnum,
   RelationEnum,
   RelationSideEnum,
@@ -14,25 +12,25 @@ import { DatabaseException } from "@errors/base.js";
 import { Database, ProcessedQuery } from "@core/database.js";
 import { AuthContext } from "@core/auth.js";
 import { Doc } from "@core/doc.js";
-import { Attribute } from "@validators/schema.js";
 import {
   ColumnInfo,
   CreateAttribute,
   CreateIndex,
   UpdateAttribute,
 } from "./types.js";
+import { Ddl } from "./ddl.js";
 
 export class Adapter extends BaseAdapter {
   protected client: PostgresClient | Transaction;
 
+  /** Schema-plane DDL emitters — see ./ddl.ts. One-way dep: ddl never imports adapter. */
+  private readonly ddl: Ddl;
+
   // Accepts a connection string, a pre-configured Bun `SQL` instance, or an
-  // existing client handle (`PostgresClient`/`Transaction`) when building a
-  // transaction-scoped adapter. Plain option objects are not supported —
-  // construct a `SQL` client yourself when pool tuning is needed.
-  //
-  // Client handles are detected via their `__type` discriminator (the same
-  // mechanism BaseAdapter.$client relies on) rather than `instanceof`,
-  // because probing foreign objects against Bun's native `SQL` class throws
+  // existing client handle (`PostgresClient`/`Transaction`) for transaction-
+  // scoped adapters. Handles are detected via their `__type` discriminator
+  // (same mechanism as BaseAdapter.$client) rather than `instanceof`, because
+  // probing foreign objects against Bun's native `SQL` class throws
   // "instanceof called on an object with an invalid prototype property".
   constructor(client: SQL | string | PostgresClient | Transaction) {
     super();
@@ -43,21 +41,33 @@ export class Adapter extends BaseAdapter {
         (client as { __type?: string }).__type === "transaction")
         ? (client as PostgresClient | Transaction)
         : new PostgresClient(client as SQL | string);
+
+    // LIVE accessors (not snapshot values): setMeta() changes and
+    // transaction-scoped adapters (copied metadata) must stay observable.
+    const host = this;
+    this.ddl = new Ddl({
+      get $schema() { return host.$schema; },
+      get $sharedTables() { return host.$sharedTables; },
+      get $namespace() { return host.$namespace; },
+      get $client() { return host.$client; },
+      sanitize: (value) => host.sanitize(value),
+      quote: (name) => host.quote(name),
+      trigger: (event, query) => host.trigger(event, query),
+      exists: (name, collection) => host.exists(name, collection),
+      getSQLType: (type, size, array) => host.getSQLType(type, size, array),
+      getSQLTable: (name) => host.getSQLTable(name),
+      getSQLIndex: (table, name) => host.getSQLIndex(table, name),
+      getInternalKeyForAttribute: (attribute) =>
+        host.getInternalKeyForAttribute(attribute),
+    });
   }
 
   async create(name: string): Promise<void> {
-    name = this.quote(name);
-    if (await this.exists(name)) return;
-
-    let sql = `CREATE SCHEMA ${name};`;
-    sql = this.trigger(EventsEnum.DatabaseCreate, sql);
-
-    await this.client.query(sql);
+    await this.ddl.create(name);
   }
 
   async delete(name: string): Promise<void> {
-    name = this.quote(name);
-    await this.client.query(`DROP SCHEMA IF EXISTS ${name} CASCADE;`);
+    await this.ddl.delete(name);
   }
 
   async createCollection({
@@ -65,327 +75,23 @@ export class Adapter extends BaseAdapter {
     attributes,
     indexes,
   }: CreateCollectionOptions): Promise<void> {
-    name = this.sanitize(name);
-    const mainTable = this.getSQLTable(name);
-    const attributeSql: string[] = [];
-    const indexSql: string[] = [];
-    const attributeHash: Record<string, Attribute> = {};
-
-    attributes.forEach((attribute) => {
-      const id = this.sanitize(attribute.getId());
-      if (attribute.get("type") === AttributeEnum.Virtual) {
-        return;
-      }
-
-      if (attribute.get("type") === AttributeEnum.Relationship) {
-        const options = attribute.get("options", {}) as Record<string, any>;
-        const relationType = options["relationType"] ?? null;
-        const twoWay = options["twoWay"] ?? false;
-        const side = options["side"] ?? null;
-
-        if (
-          relationType === RelationEnum.ManyToMany ||
-          (relationType === RelationEnum.OneToOne &&
-            !twoWay &&
-            side === "child") ||
-          (relationType === RelationEnum.OneToMany &&
-            side === RelationSideEnum.Parent) ||
-          (relationType === RelationEnum.ManyToOne &&
-            side === RelationSideEnum.Child)
-        ) {
-          return;
-        }
-      }
-
-      attributeHash[id] = attribute.toObject();
-      const type = this.getSQLType(
-        attribute.get("type"),
-        attribute.get("size"),
-        attribute.get("array"),
-      );
-
-      let sql = `${this.quote(id)} ${type}`;
-      attributeSql.push(sql);
-    });
-
-    indexes?.forEach((index) => {
-      const indexId = index.getId();
-      const indexType = index.get("type");
-      const indexAttributes = index.get("attributes") as string[];
-      const orders = index.get("orders") || [];
-
-      const isFulltext = indexType === IndexEnum.FullText;
-      const hasArrayAttribute = indexAttributes.some((attrKey) => {
-        const metadata = attributeHash[attrKey];
-        return metadata?.array;
-      });
-
-      let usingClause = "";
-      if (isFulltext || hasArrayAttribute) {
-        usingClause = "USING GIN";
-      }
-
-      const formattedIndexAttributes = indexAttributes.map(
-        (attributeKey, i) => {
-          const pgKey = `"${this.sanitize(this.getInternalKeyForAttribute(attributeKey))}"`;
-          const order = orders[i] && !isFulltext ? ` ${orders[i]}` : "";
-
-          if (isFulltext) {
-            return `to_tsvector('english', ${pgKey})`;
-          }
-
-          return `${pgKey}${order}`;
-        },
-      );
-
-      // For multi-column full-text indexes, we must join the `to_tsvector` calls
-      let attributesForSql = formattedIndexAttributes.join(", ");
-      if (isFulltext && formattedIndexAttributes.length > 1) {
-        attributesForSql = formattedIndexAttributes.join(" || ");
-      }
-
-      if (this.$sharedTables && !isFulltext) {
-        const pgTenantKey = `"${this.sanitize("_tenant")}"`;
-        attributesForSql = `${pgTenantKey}, ${attributesForSql}`;
-      }
-
-      const uniqueClause = isFulltext
-        ? ""
-        : indexType === IndexEnum.Unique
-          ? "UNIQUE "
-          : "";
-
-      const pgIndexId = this.getSQLIndex(name, this.sanitize(indexId));
-      const sql = `CREATE ${uniqueClause}INDEX ${pgIndexId} ON ${mainTable} ${usingClause} (${attributesForSql});`;
-
-      indexSql.push(sql);
-    });
-
-    const mainTableColumns = [
-      `"_id" BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY`,
-      `"_uid" VARCHAR(255) NOT NULL`,
-      `"_createdAt" TIMESTAMP WITH TIME ZONE DEFAULT NULL`,
-      `"_updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT NULL`,
-      `"_permissions" TEXT[] DEFAULT '{}'`,
-      ...attributeSql,
-    ];
-
-    let primaryKeyDefinition: string;
-    const tenantCol = this.quote("_tenant");
-
-    if (this.$sharedTables) {
-      mainTableColumns.splice(1, 0, `${tenantCol} BIGINT DEFAULT NULL`);
-      primaryKeyDefinition = `PRIMARY KEY ("_id", ${tenantCol})`;
-    } else {
-      primaryKeyDefinition = `PRIMARY KEY ("_id")`;
-    }
-
-    const columnsAndConstraints = mainTableColumns.join(",\n");
-    let tableSql = `
-            CREATE TABLE ${mainTable} (
-                ${columnsAndConstraints},
-                ${primaryKeyDefinition}
-            );
-        `;
-
-    const postTableIndexes: string[] = [];
-    if (this.$sharedTables) {
-      postTableIndexes.push(
-        `CREATE UNIQUE INDEX ${this.getSQLIndex(name, "uid_tenant")} ON ${mainTable} ("_uid", ${tenantCol});`,
-      );
-      postTableIndexes.push(
-        `CREATE INDEX ${this.getSQLIndex(name, "created_at_tenant")} ON ${mainTable} (${tenantCol}, "_createdAt");`,
-      );
-      postTableIndexes.push(
-        `CREATE INDEX ${this.getSQLIndex(name, "updated_at_tenant")} ON ${mainTable} (${tenantCol}, "_updatedAt");`,
-      );
-      postTableIndexes.push(
-        `CREATE INDEX ${this.getSQLIndex(name, "tenant_id")} ${mainTable} (${tenantCol}, "_id");`,
-      );
-    } else {
-      postTableIndexes.push(
-        `CREATE UNIQUE INDEX ${this.getSQLIndex(name, "uid")} ON ${mainTable} ("_uid");`,
-      );
-      postTableIndexes.push(
-        `CREATE INDEX ${this.getSQLIndex(name, "created_at")} ON ${mainTable} ("_createdAt");`,
-      );
-      postTableIndexes.push(
-        `CREATE INDEX ${this.getSQLIndex(name, "updated_at")} ON ${mainTable} ("_updatedAt");`,
-      );
-    }
-    postTableIndexes.push(
-      `CREATE INDEX ${this.getSQLIndex(name, "permissions_gin_idx")} ON ${mainTable} USING GIN ("_permissions");`,
-    );
-
-    tableSql = this.trigger(EventsEnum.CollectionCreate, tableSql);
-
-    const permissionsTableName = this.getSQLTable(name + "_perms");
-
-    const permissionsTableColumns = [
-      `"_id" BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY`,
-      `"_type" VARCHAR(12) NOT NULL`,
-      `"_permissions" TEXT[] NOT NULL DEFAULT '{}'`,
-      `"_document" BIGINT NOT NULL`,
-      `FOREIGN KEY ("_document") REFERENCES ${mainTable}("_id") ON DELETE CASCADE`,
-    ];
-    const postPermissionsTableIndexes: string[] = [];
-    let permissionsPrimaryKeyDefinition: string;
-
-    if (this.$sharedTables) {
-      permissionsTableColumns.splice(1, 0, `${tenantCol} BIGINT DEFAULT NULL`);
-      permissionsPrimaryKeyDefinition = `PRIMARY KEY ("_id", ${tenantCol})`;
-
-      postPermissionsTableIndexes.push(
-        `CREATE UNIQUE INDEX ${this.getSQLIndex(`${name}_perms`, "index1")} ON ${permissionsTableName} ("_document", ${tenantCol}, "_type");`,
-      );
-      postPermissionsTableIndexes.push(
-        `CREATE INDEX ${this.getSQLIndex(`${name}_perms`, "tenant")} ON ${permissionsTableName} (${tenantCol});`,
-      );
-    } else {
-      permissionsPrimaryKeyDefinition = `PRIMARY KEY ("_id")`;
-      postPermissionsTableIndexes.push(
-        `CREATE UNIQUE INDEX ${this.getSQLIndex(`${name}_perms`, "index1")} ON ${permissionsTableName} ("_document", "_type");`,
-      );
-    }
-    postPermissionsTableIndexes.push(
-      `CREATE INDEX ${this.getSQLIndex(`${name}_perms`, "permissions_gin_idx")} ON ${permissionsTableName} USING GIN ("_permissions");`,
-    );
-
-    const permissionsColumnsAndConstraints =
-      permissionsTableColumns.join(",\n");
-    let permissionsTable = `
-            CREATE TABLE ${permissionsTableName} (
-                ${permissionsColumnsAndConstraints},
-                ${permissionsPrimaryKeyDefinition}
-            );
-        `;
-
-    permissionsTable = this.trigger(
-      EventsEnum.PermissionsCreate,
-      permissionsTable,
-    );
-
-    try {
-      const callback = async (tx: Transaction | PostgresClient) => {
-        await tx.query(tableSql);
-        for (const sql of postTableIndexes) {
-          await tx.query(sql);
-        }
-
-        for (const sql of indexSql) {
-          await tx.query(sql);
-        }
-
-        await tx.query(permissionsTable);
-        for (const sql of postPermissionsTableIndexes) {
-          await tx.query(sql);
-        }
-      };
-
-      const client = this.$client;
-      if (client.__type === "postgres") {
-        await client.transaction(callback);
-      } else {
-        callback(client);
-      }
-    } catch (error) {
-      this.processException(error);
-    }
+    await this.ddl.createCollection({ name, attributes, indexes });
   }
 
   public async getSizeOfCollectionOnDisk(collection: string): Promise<number> {
-    collection = this.sanitize(collection);
-    const collectionTableName = `'${this.$namespace}_${collection}'`;
-    const permissionsTableName = `'${this.$namespace}_${collection}_perms'`;
-
-    const sql = `
-            SELECT
-                pg_total_relation_size(${collectionTableName}::regclass) AS collection_size,
-                pg_total_relation_size(${permissionsTableName}::regclass) AS permissions_size;
-        `;
-
-    try {
-      const [rows]: any = await this.client.query(sql);
-      const collectionSize = Number(rows[0]?.collection_size ?? 0);
-      const permissionsSize = Number(rows[0]?.permissions_size ?? 0);
-      return collectionSize + permissionsSize;
-    } catch (e: any) {
-      if (
-        e.message.includes("relation") &&
-        e.message.includes("does not exist")
-      ) {
-        return 0;
-      }
-      this.processException(
-        e,
-        `Failed to get size of collection ${collection} on disk: ${e.message}`,
-      );
-    }
+    return this.ddl.getSizeOfCollectionOnDisk(collection);
   }
 
   public async getSizeOfCollection(collection: string): Promise<number> {
-    collection = this.sanitize(collection);
-    const collectionTableName = `'${this.$namespace}_${collection}'`;
-    const permissionsTableName = `'${this.$namespace}_${collection}_perms'`;
-
-    const sql = `
-            SELECT
-            pg_table_size(${collectionTableName}::regclass) + pg_indexes_size(${collectionTableName}::regclass) AS collection_size,
-            pg_table_size(${permissionsTableName}::regclass) + pg_indexes_size(${permissionsTableName}::regclass) AS permissions_size;
-        `;
-
-    try {
-      const { rows } = await this.client.query(sql);
-      const collectionSize = Number(rows[0]?.collection_size ?? 0);
-      const permissionsSize = Number(rows[0]?.permissions_size ?? 0);
-      return collectionSize + permissionsSize;
-    } catch (e: any) {
-      if (
-        e.message.includes("relation") &&
-        e.message.includes("does not exist")
-      ) {
-        return 0;
-      }
-      this.processException(
-        e,
-        `Failed to get size of collection ${collection}: ${e.message}`,
-      );
-    }
+    return this.ddl.getSizeOfCollection(collection);
   }
 
   public async deleteCollection(id: string): Promise<void> {
-    const permissionsTableName = this.getSQLTable(this.sanitize(id + "_perms"));
-    const collectionTableName = this.getSQLTable(this.sanitize(id));
-
-    let dropPermsSql = `DROP TABLE IF EXISTS ${permissionsTableName} CASCADE;`;
-    dropPermsSql = this.trigger(EventsEnum.CollectionDelete, dropPermsSql);
-
-    let dropCollectionSql = `DROP TABLE IF EXISTS ${collectionTableName} CASCADE;`;
-    dropCollectionSql = this.trigger(
-      EventsEnum.CollectionDelete,
-      dropCollectionSql,
-    );
-
-    try {
-      await this.client.query(dropPermsSql);
-      await this.client.query(dropCollectionSql);
-    } catch (e: any) {
-      this.processException(e, `Failed to delete collection ${id}`);
-    }
+    await this.ddl.deleteCollection(id);
   }
 
   public async analyzeCollection(collection: string): Promise<boolean> {
-    const name = this.sanitize(collection);
-    const tableName = this.getSQLTable(name);
-
-    const sql = `ANALYZE ${tableName}`;
-
-    try {
-      await this.client.query(sql);
-      return true;
-    } catch (e: any) {
-      this.processException(e, `Failed to analyze collection ${collection}`);
-    }
+    return this.ddl.analyzeCollection(collection);
   }
 
   public async createAttribute({
@@ -395,71 +101,14 @@ export class Adapter extends BaseAdapter {
     array,
     type,
   }: CreateAttribute): Promise<void> {
-    if (!name || !collection || !type) {
-      throw new DatabaseException(
-        "Failed to create attribute: name, collection, and type are required",
-      );
-    }
-
-    const sqlType = this.getSQLType(type, size, array);
-    const table = this.getSQLTable(collection);
-
-    let sql = `
-                ALTER TABLE ${table}
-                ADD COLUMN ${this.quote(name)} ${sqlType}
-            `;
-    sql = this.trigger(EventsEnum.AttributeCreate, sql);
-
-    try {
-      await this.client.query(sql);
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to create attribute '${name}' in collection '${collection}'`,
-      );
-    }
+    await this.ddl.createAttribute({ key: name, collection, size, array, type });
   }
 
   public async createAttributes(
     collection: string,
     attributes: Omit<CreateAttribute, "collection">[],
   ): Promise<void> {
-    if (!Array.isArray(attributes) || attributes.length === 0) {
-      throw new DatabaseException(
-        "Failed to create attributes: attributes must be a non-empty array",
-      );
-    }
-
-    const parts: string[] = [];
-
-    for (const attr of attributes) {
-      if (!attr.key || !attr.type) {
-        throw new DatabaseException(
-          "Failed to create attribute: name and type are required",
-        );
-      }
-
-      const sqlType = this.getSQLType(attr.type, attr.size, attr.array);
-      parts.push(`${this.quote(attr.key)} ${sqlType}`);
-    }
-
-    const columns = parts.join(", ADD COLUMN ");
-    const table = this.getSQLTable(collection);
-    let sql = `
-                ALTER TABLE ${table}
-                ADD COLUMN ${columns}
-            `;
-
-    sql = this.trigger(EventsEnum.AttributesCreate, sql);
-
-    try {
-      await this.client.query(sql);
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to create attributes in collection '${collection}'`,
-      );
-    }
+    return this.ddl.createAttributes(collection, attributes);
   }
 
   public async renameAttribute(
@@ -467,154 +116,20 @@ export class Adapter extends BaseAdapter {
     oldName: string,
     newName: string,
   ): Promise<void> {
-    if (!oldName || !newName || !collection) {
-      throw new DatabaseException(
-        "Failed to rename attribute: oldName, newName, and collection are required",
-      );
-    }
-
-    const table = this.getSQLTable(collection);
-    let sql = `
-                ALTER TABLE ${table}
-                RENAME COLUMN ${this.quote(oldName)} TO ${this.quote(newName)}
-            `;
-
-    sql = this.trigger(EventsEnum.AttributeUpdate, sql);
-
-    try {
-      await this.client.query(sql);
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to rename attribute '${oldName}' to '${newName}' in collection '${collection}'`,
-      );
-    }
+    return this.ddl.renameAttribute(collection, oldName, newName);
   }
 
   public async deleteAttribute(
     collection: string,
     name: string,
   ): Promise<void> {
-    if (!name || !collection) {
-      throw new DatabaseException(
-        "Failed to delete attribute: name and collection are required",
-      );
-    }
-
-    const table = this.getSQLTable(collection);
-    let sql = `
-                ALTER TABLE ${table}
-                DROP COLUMN ${this.quote(name)}
-            `;
-
-    sql = this.trigger(EventsEnum.AttributeDelete, sql);
-
-    try {
-      await this.client.query(sql);
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to delete attribute '${name}' from collection '${collection}'`,
-      );
-    }
+    return this.ddl.deleteAttribute(collection, name);
   }
 
   public async getSchemaAttributes(
     collection: string,
   ): Promise<Doc<ColumnInfo>[]> {
-    const schema = this.$schema;
-    const table = `${this.$namespace}_${this.sanitize(collection)}`;
-
-    const sql = `
-            SELECT
-                cols.column_name AS "$id",
-                pg_get_expr(def.adbin, def.adrelid) AS "columnDefault",
-                cols.is_nullable AS "isNullable",
-                cols.data_type AS "dataType",
-                cols.character_maximum_length AS "characterMaximumLength",
-                cols.numeric_precision AS "numericPrecision",
-                cols.numeric_scale AS "numericScale",
-                cols.datetime_precision AS "datetimePrecision",
-                cols.udt_name AS "udtName",
-                att.attidentity AS "identityFlag",
-                CASE WHEN pk.constraint_type = 'PRIMARY KEY' THEN 'PRI' ELSE '' END AS "columnKey"
-            FROM
-                information_schema.columns AS cols
-            JOIN
-                pg_class AS cls ON cls.relname = $1
-            JOIN
-                pg_namespace AS ns ON ns.oid = cls.relnamespace AND ns.nspname = $2
-            LEFT JOIN
-                pg_attribute AS att ON att.attrelid = cls.oid AND att.attname = cols.column_name
-            LEFT JOIN
-                pg_attrdef AS def ON def.adrelid = cls.oid AND def.adnum = att.attnum
-            LEFT JOIN (
-                SELECT
-                    kcu.column_name,
-                    tc.constraint_type
-                FROM
-                    information_schema.table_constraints AS tc
-                JOIN
-                    information_schema.key_column_usage AS kcu
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema
-                    AND tc.table_name = kcu.table_name
-                WHERE
-                    tc.constraint_type = 'PRIMARY KEY'
-                    AND tc.table_schema = $2
-                    AND tc.table_name = $1
-            ) AS pk ON pk.column_name = cols.column_name
-            WHERE
-                cols.table_schema = $2
-                AND cols.table_name = $1
-            ORDER BY
-                cols.ordinal_position;
-        `;
-
-    try {
-      const result: any = await this.client.query(sql, [table, schema]);
-
-      return result.rows.map((row: any) => {
-        row.isNullable = row.isNullable === "YES" ? "YES" : "NO";
-        if (row.udtName?.startsWith("_")) {
-          row.dataType = row.udtName.slice(1) + "[]";
-        }
-        switch (row.dataType) {
-          case "int4":
-            row.dataType = "integer";
-            break;
-          case "int8":
-            row.dataType = "bigint";
-            break;
-          case "float8":
-            row.dataType = "double precision";
-            break;
-          case "bool":
-            row.dataType = "boolean";
-            break;
-          case "timestamptz":
-            row.dataType = "timestamptz";
-            break;
-          case "jsonb":
-            row.dataType = "json";
-            break;
-          case "uuid":
-            row.dataType = "uuid";
-            break;
-          default:
-            break;
-        }
-        row.extra =
-          row.identityFlag === "a" || row.identityFlag === "d"
-            ? "auto_increment"
-            : "";
-        delete row.identityFlag;
-
-        return Doc.from(row);
-      });
-    } catch (e: any) {
-      this.processException(e, "Failed to get schema attributes");
-    }
+    return this.ddl.getSchemaAttributes(collection);
   }
 
   public async createRelationship(
@@ -625,63 +140,14 @@ export class Adapter extends BaseAdapter {
     id: string = "",
     twoWayKey: string = "",
   ): Promise<boolean> {
-    const name = this.sanitize(collection);
-    const relatedName = this.sanitize(relatedCollection);
-    const table = this.getSQLTable(name);
-    const relatedTable = this.getSQLTable(relatedName);
-    const sanitizedId = this.sanitize(id);
-    const sanitizedTwoWayKey = this.sanitize(twoWayKey);
-    const sqlType = this.getSQLType(AttributeEnum.Relationship, 0, false);
-
-    let sql: string;
-
-    switch (type) {
-      case RelationEnum.OneToOne:
-        sql = `
-                    ALTER TABLE ${table} 
-                    ADD COLUMN ${this.quote(sanitizedId)} ${sqlType} DEFAULT NULL;
-                `;
-
-        if (twoWay) {
-          sql += `
-                        ALTER TABLE ${relatedTable} 
-                        ADD COLUMN ${this.quote(sanitizedTwoWayKey)} ${sqlType} DEFAULT NULL;
-                    `;
-        }
-        break;
-
-      case RelationEnum.OneToMany:
-        sql = `
-                    ALTER TABLE ${relatedTable} 
-                    ADD COLUMN ${this.quote(sanitizedTwoWayKey)} ${sqlType} DEFAULT NULL;
-                `;
-        break;
-
-      case RelationEnum.ManyToOne:
-        sql = `
-                    ALTER TABLE ${table} 
-                    ADD COLUMN ${this.quote(sanitizedId)} ${sqlType} DEFAULT NULL;
-                `;
-        break;
-
-      case RelationEnum.ManyToMany:
-        return true;
-
-      default:
-        throw new DatabaseException("Invalid relationship type");
-    }
-
-    sql = this.trigger(EventsEnum.AttributeCreate, sql);
-
-    try {
-      await this.client.query(sql);
-      return true;
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to create relationship between '${collection}' and '${relatedCollection}'`,
-      );
-    }
+    return this.ddl.createRelationship(
+      collection,
+      relatedCollection,
+      type,
+      twoWay,
+      id,
+      twoWayKey,
+    );
   }
 
   public async updateRelationship(
@@ -695,75 +161,17 @@ export class Adapter extends BaseAdapter {
     newKey?: string,
     newTwoWayKey?: string,
   ): Promise<boolean> {
-    const name = this.sanitize(collection);
-    const relatedName = this.sanitize(relatedCollection);
-    const table = this.getSQLTable(name);
-    const relatedTable = this.getSQLTable(relatedName);
-    const sanitizedKey = this.sanitize(key);
-    const sanitizedTwoWayKey = this.sanitize(twoWayKey);
-
-    let sql = "";
-
-    if (newKey) {
-      newKey = this.sanitize(newKey);
-    }
-    if (newTwoWayKey) {
-      newTwoWayKey = this.sanitize(newTwoWayKey);
-    }
-
-    switch (type) {
-      case RelationEnum.OneToOne:
-        if (sanitizedKey !== newKey) {
-          sql = `ALTER TABLE ${table} RENAME COLUMN ${this.quote(sanitizedKey)} TO ${this.quote(newKey!)};`;
-        }
-        if (twoWay && sanitizedTwoWayKey !== newTwoWayKey) {
-          sql += `ALTER TABLE ${relatedTable} RENAME COLUMN ${this.quote(sanitizedTwoWayKey)} TO ${this.quote(newTwoWayKey!)};`;
-        }
-        break;
-      case RelationEnum.OneToMany:
-        if (side === RelationSideEnum.Parent) {
-          if (sanitizedTwoWayKey !== newTwoWayKey) {
-            sql = `ALTER TABLE ${relatedTable} RENAME COLUMN ${this.quote(sanitizedTwoWayKey)} TO ${this.quote(newTwoWayKey!)};`;
-          }
-        } else {
-          if (sanitizedKey !== newKey) {
-            sql = `ALTER TABLE ${table} RENAME COLUMN ${this.quote(sanitizedKey)} TO ${this.quote(newKey!)};`;
-          }
-        }
-        break;
-      case RelationEnum.ManyToOne:
-        if (side === RelationSideEnum.Child) {
-          if (sanitizedTwoWayKey !== newTwoWayKey) {
-            sql = `ALTER TABLE ${relatedTable} RENAME COLUMN ${this.quote(sanitizedTwoWayKey)} TO ${this.quote(newTwoWayKey!)};`;
-          }
-        } else {
-          if (sanitizedKey !== newKey) {
-            sql = `ALTER TABLE ${table} RENAME COLUMN ${this.quote(sanitizedKey)} TO ${this.quote(newKey!)};`;
-          }
-        }
-        break;
-      case RelationEnum.ManyToMany:
-        // TODO:
-        break;
-      default:
-        throw new DatabaseException("Invalid relationship type");
-    }
-
-    if (!sql) {
-      return true;
-    }
-
-    sql = this.trigger(EventsEnum.AttributeUpdate, sql);
-
-    try {
-      await this.client.query(sql);
-      return true;
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to update relationship between '${collection}' and '${relatedCollection}'`,
-      );
-    }
+    return this.ddl.updateRelationship(
+      collection,
+      relatedCollection,
+      type,
+      twoWay,
+      key,
+      twoWayKey,
+      side,
+      newKey,
+      newTwoWayKey,
+    );
   }
 
   public async deleteRelationship(
@@ -775,64 +183,15 @@ export class Adapter extends BaseAdapter {
     twoWayKey: string,
     side: RelationSideEnum,
   ): Promise<boolean> {
-    const name = this.sanitize(collection);
-    const relatedName = this.sanitize(relatedCollection);
-    const table = this.getSQLTable(name);
-    const relatedTable = this.getSQLTable(relatedName);
-    const sanitizedKey = this.sanitize(key);
-    const sanitizedTwoWayKey = this.sanitize(twoWayKey);
-
-    let sql = "";
-
-    switch (type) {
-      case RelationEnum.OneToOne:
-        if (side === RelationSideEnum.Parent) {
-          sql = `ALTER TABLE ${table} DROP COLUMN ${this.quote(sanitizedKey)};`;
-          if (twoWay) {
-            sql += `ALTER TABLE ${relatedTable} DROP COLUMN ${this.quote(sanitizedTwoWayKey)};`;
-          }
-        } else if (side === RelationSideEnum.Child) {
-          sql = `ALTER TABLE ${relatedTable} DROP COLUMN ${this.quote(sanitizedTwoWayKey)};`;
-          if (twoWay) {
-            sql += `ALTER TABLE ${table} DROP COLUMN ${this.quote(sanitizedKey)};`;
-          }
-        }
-        break;
-      case RelationEnum.OneToMany:
-        if (side === RelationSideEnum.Parent) {
-          sql = `ALTER TABLE ${relatedTable} DROP COLUMN ${this.quote(sanitizedTwoWayKey)};`;
-        } else {
-          sql = `ALTER TABLE ${table} DROP COLUMN ${this.quote(sanitizedKey)};`;
-        }
-        break;
-      case RelationEnum.ManyToOne:
-        if (side === RelationSideEnum.Child) {
-          sql = `ALTER TABLE ${relatedTable} DROP COLUMN ${this.quote(sanitizedTwoWayKey)};`;
-        } else {
-          sql = `ALTER TABLE ${table} DROP COLUMN ${this.quote(sanitizedKey)};`;
-        }
-        break;
-      case RelationEnum.ManyToMany:
-        break;
-      default:
-        throw new DatabaseException("Invalid relationship type");
-    }
-
-    if (!sql) {
-      return true;
-    }
-
-    sql = this.trigger(EventsEnum.AttributeDelete, sql);
-
-    try {
-      await this.client.query(sql);
-      return true;
-    } catch (e: any) {
-      this.processException(
-        e,
-        `Failed to delete relationship between '${collection}' and '${relatedCollection}'`,
-      );
-    }
+    return this.ddl.deleteRelationship(
+      collection,
+      relatedCollection,
+      type,
+      twoWay,
+      key,
+      twoWayKey,
+      side,
+    );
   }
 
   public async updateAttribute({
@@ -843,26 +202,14 @@ export class Adapter extends BaseAdapter {
     size,
     type,
   }: UpdateAttribute): Promise<void> {
-    const tableName = this.getSQLTable(this.sanitize(collection));
-    const columnName = this.sanitize(name);
-    const newColumnName = newName ? this.sanitize(newName) : null;
-    const sqlType = this.getSQLType(type, size, array);
-
-    let sql: string;
-    if (newColumnName) {
-      sql = `ALTER TABLE ${tableName} RENAME COLUMN ${this.quote(columnName)} TO ${this.quote(newColumnName)};`;
-      sql += ` ALTER TABLE ${tableName} ALTER COLUMN ${this.quote(newColumnName)} TYPE ${sqlType};`;
-    } else {
-      sql = `ALTER TABLE ${tableName} ALTER COLUMN ${this.quote(columnName)} TYPE ${sqlType};`;
-    }
-
-    sql = this.trigger(EventsEnum.AttributeUpdate, sql);
-
-    try {
-      await this.client.query(sql);
-    } catch (e: any) {
-      this.processException(e, "Failed to update attribute");
-    }
+    await this.ddl.updateAttribute({
+      collection,
+      key: name,
+      newName,
+      array,
+      size,
+      type,
+    });
   }
 
   public async renameIndex(
@@ -870,21 +217,7 @@ export class Adapter extends BaseAdapter {
     oldName: string,
     newName: string,
   ): Promise<boolean> {
-    const currentPgIndexName = this.getSQLIndex(collectionId, oldName);
-    const newPgIndexName = this.getSQLIndex(collectionId, newName);
-
-    let sql = `ALTER INDEX ${this.quote(this.$schema)}.${currentPgIndexName} RENAME TO ${newPgIndexName};`;
-    sql = this.trigger(EventsEnum.IndexRename, sql);
-
-    try {
-      await this.client.query(sql);
-      return true;
-    } catch (e: any) {
-      throw this.processException(
-        e,
-        `Failed to rename index from ${oldName} to ${newName} for collection ${collectionId}`,
-      );
-    }
+    return this.ddl.renameIndex(collectionId, oldName, newName);
   }
 
   public async createIndex({
@@ -895,81 +228,18 @@ export class Adapter extends BaseAdapter {
     orders = [],
     attributeTypes = {},
   }: CreateIndex): Promise<boolean> {
-    const isUnique = type === IndexEnum.Unique;
-    const isFulltext = type === IndexEnum.FullText;
-
-    let usingClause = "";
-    if (isFulltext) {
-      usingClause = "USING GIN";
-    }
-
-    const preparedAttributes = attributes.map((attrId, i) => {
-      const collectionAttribute = attributeTypes[attrId.toLowerCase()];
-
-      if (!collectionAttribute) {
-        throw new DatabaseException(
-          `Attribute '${attrId}' not found in collection metadata.`,
-        );
-      }
-
-      const internalKey = this.getInternalKeyForAttribute(attrId);
-      const sanitizedKey = this.sanitize(internalKey);
-      const pgKey = this.quote(sanitizedKey);
-
-      if (isFulltext) {
-        // Full-text search indexes on a `TSVECTOR` representation of the column.
-        // We use the `to_tsvector` function for this.
-        return `to_tsvector('${Database.FULLTEXT_LANGUAGE}', ${pgKey})`;
-      }
-
-      if (collectionAttribute.array) {
-        usingClause = "USING GIN";
-        return pgKey;
-      }
-      const order = orders[i] && !isFulltext ? ` ${orders[i]}` : "";
-      return `${pgKey}${order}`;
+    return this.ddl.createIndex({
+      collection: collectionId,
+      name,
+      type,
+      attributes,
+      orders,
+      attributeTypes,
     });
-
-    if (isFulltext && preparedAttributes.length > 1) {
-      const combinedTsvector = preparedAttributes.join(" || ");
-      preparedAttributes.length = 0;
-      preparedAttributes.push(combinedTsvector);
-    }
-
-    const pgTable = this.getSQLTable(collectionId);
-    const pgIndexId = this.getSQLIndex(collectionId, name);
-    const uniqueClause = isUnique ? "UNIQUE" : "";
-
-    let attributesForSql = preparedAttributes.join(", ");
-
-    if (this.$sharedTables && !isFulltext) {
-      const pgTenantKey = `"${this.sanitize("_tenant")}"`;
-      attributesForSql = `${pgTenantKey}, ${attributesForSql}`;
-    }
-
-    const sql = `CREATE ${uniqueClause} INDEX ${pgIndexId} ON ${pgTable} ${usingClause} (${attributesForSql})`;
-    const finalSql = this.trigger(EventsEnum.IndexCreate, sql);
-
-    try {
-      await this.client.query(finalSql);
-      return true;
-    } catch (e) {
-      throw this.processException(e);
-    }
   }
 
   public async deleteIndex(collection: string, id: string): Promise<boolean> {
-    const pgIndexName = this.getSQLIndex(collection, id);
-
-    let sql = `DROP INDEX ${this.quote(this.$schema)}.${pgIndexName};`;
-    sql = this.trigger(EventsEnum.IndexDelete, sql);
-
-    try {
-      await this.client.query(sql);
-      return true;
-    } catch (e: any) {
-      return false;
-    }
+    return this.ddl.deleteIndex(collection, id);
   }
 
   /**
@@ -1021,12 +291,12 @@ export class Adapter extends BaseAdapter {
             `;
 
       sql = this.trigger(EventsEnum.DocumentCreate, sql);
-      const { rows } = await this.client.query(sql, values);
+      const { rows } = await this.client.query<{ _id: number }>(sql, values);
 
       // Set $sequence from insertId
-      document.set("$sequence", rows[0]["_id"]);
+      document.set("$sequence", rows[0]!._id);
 
-      if (!rows[0]["_id"]) {
+      if (!rows[0]!._id) {
         throw new DatabaseException(
           'Error creating document empty "$sequence"',
         );
@@ -1131,11 +401,11 @@ export class Adapter extends BaseAdapter {
     sql = this.trigger(EventsEnum.DocumentCreate, sql);
 
     try {
-      const { rows } = await this.client.query(sql, allValues);
+      const { rows } = await this.client.query<{ _id: number; _uid: string }>(sql, allValues);
 
       // Set $sequence from returned IDs
       for (let i = 0; i < documents.length; i++) {
-        documents[i]!.set("$sequence", rows[i]["_id"]);
+        documents[i]!.set("$sequence", rows[i]!._id);
       }
 
       // Handle permissions in batch
@@ -1354,7 +624,7 @@ export class Adapter extends BaseAdapter {
         `.trim();
 
     try {
-      const { rows } = await this.client.query(sql, params);
+      const { rows } = await this.client.query<{ $sequence: number; $id: string }>(sql, params);
 
       if (rows.length === 0) {
         return [];

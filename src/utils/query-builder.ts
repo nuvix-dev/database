@@ -1,15 +1,17 @@
 import { Doc } from "@core/doc.js";
 import { CursorEnum } from "@core/enums.js";
 import { Query, ScalarValue } from "@core/query.js";
-import type { Entities } from "types.js";
+import type { Entities } from "@nuvix/db";
 
-type Attrs<T extends keyof Entities> = string & keyof Entities[T];
+type Attrs<T extends string> = T extends keyof Entities
+  ? string & keyof Entities[T]
+  : string;
 
 /**
  * A fluent builder class for constructing an array of Query objects.
  * This class provides a chainable API for creating complex queries.
  */
-export class QueryBuilder<T extends string & keyof Entities = any> {
+export class QueryBuilder<T extends string = string> {
   private queries: Query[] = [];
 
   constructor() {}

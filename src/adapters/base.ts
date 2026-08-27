@@ -1,34 +1,21 @@
 import { DatabaseException } from "@errors/base.js";
-import {
-  AttributeEnum,
-  EventsEnum,
-  IndexEnum,
-  PermissionEnum,
-  RelationEnum,
-  RelationSideEnum,
-  CursorEnum,
-  OrderEnum,
-} from "@core/enums.js";
+import { AttributeEnum, EventsEnum, PermissionEnum } from "@core/enums.js";
 import { IncreaseDocumentAttribute } from "./types.js";
 import { processException } from "./error-mapper.js";
 import { Doc } from "@core/doc.js";
 import { Database, PopulateQuery, ProcessedQuery } from "@core/database.js";
 import { QueryBuilder } from "@utils/query-builder.js";
-import { Query, QueryType } from "@core/query.js";
-import { Entities, IEntity } from "types.js";
+import { Query } from "@core/query.js";
+import type { Entities } from "@nuvix/db";
+import type { IEntity } from "types.js";
 import { Logger } from "@utils/logger.js";
 import { AuthContext } from "@core/auth.js";
-import { Collection, RelationOptions } from "@validators/schema.js";
-import type { DatabaseError } from "./postgres.js";
-import { OrderException } from "@errors/index.js";
+import { Collection } from "@validators/schema.js";
+import type { DatabaseError, PostgresClient, Transaction } from "./postgres.js";
 import { EventEmitter } from "node:events";
-import type { PostgresClient, Transaction } from "./postgres.js";
+import { INTERNAL_ATTR_KEYS, SqlBuilder } from "./sql-builder.js";
 
-/**
- * Local mirror of core/auth's private isSystemContext predicate. Declared here
- * (rather than exported from @core/auth.js) to keep this subtask's diff surface
- * limited to the adapter layer.
- */
+// Local mirror of core/auth's private isSystemContext predicate (adapter-layer scope).
 const isSystemContext = (ctx: AuthContext): boolean =>
   "system" in ctx && ctx.system === true;
 
@@ -68,17 +55,13 @@ export abstract class BaseAdapter extends EventEmitter {
   readonly $maxIndexLength: number = 8191;
   readonly $supportForJSONOverlaps: boolean = true;
 
-  protected transformations: Partial<
-    Record<EventsEnum, Array<[string, (query: string) => string]>>
-  > = {
+  protected transformations: Partial<Record<EventsEnum, Array<[string, (query: string) => string]>>> = {
     [EventsEnum.All]: [],
   };
 
   constructor(options: { type?: string } = {}) {
     super();
-    if (options.type) {
-      this.type = options.type;
-    }
+    if (options.type) this.type = options.type;
   }
 
   public get $database(): string {
@@ -181,20 +164,7 @@ export abstract class BaseAdapter extends EventEmitter {
   }
 
   public sanitize(value: string): string {
-    if (value === null || value === undefined) {
-      throw new DatabaseException(
-        "Failed to sanitize key: value is null or undefined",
-      );
-    }
-
-    const sanitized = value.replace(/[^A-Za-z0-9_\-]/g, "");
-    if (sanitized === "") {
-      throw new DatabaseException(
-        "Failed to sanitize key: filtered value is empty",
-      );
-    }
-
-    return sanitized;
+    return SqlBuilder.sanitize(value);
   }
 
   public async ping(): Promise<void> {
@@ -226,7 +196,10 @@ export abstract class BaseAdapter extends EventEmitter {
           WHERE table_schema = ? AND table_name = ?
           LIMIT 1
         `;
-        params.push(this.sanitize(name), this.getTableName(collection));
+        params.push(
+          this.sanitize(name),
+          SqlBuilder.getTableName(this._meta, collection),
+        );
       } else {
         sql = `
           SELECT 1
@@ -240,10 +213,7 @@ export abstract class BaseAdapter extends EventEmitter {
       const { rows } = await this.client.query<any>(sql, params);
       return rows.length > 0;
     } catch (error) {
-      this.processException(
-        error,
-        `Failed to check if ${collection ? "table" : "schema"} exists`,
-      );
+      this.processException(error, `Failed to check if ${collection ? "table" : "schema"} exists`);
     }
   }
 
@@ -282,7 +252,7 @@ export abstract class BaseAdapter extends EventEmitter {
     const params: any[] = [id];
 
     let sql = `
-            SELECT ${this.getAttributeProjection(selections, alias, collection)}
+            SELECT ${SqlBuilder.getAttributeProjection(this._meta, selections, alias, collection)}
             FROM ${table} AS ${alias}
             WHERE ${this.quote(alias)}.${this.quote("_uid")} = ?
             ${this.getTenantQuery(collection, alias)}
@@ -425,24 +395,23 @@ export abstract class BaseAdapter extends EventEmitter {
     const alias = Query.DEFAULT_ALIAS;
 
     const queryList = [
-      ...(Array.isArray(queries)
-        ? queries
-        : queries(new QueryBuilder()).build()),
+      ...(Array.isArray(queries) ? queries : queries(new QueryBuilder()).build()),
     ];
 
-    const conditions = this.getSQLConditions(queryList, params);
+    const conditions = SqlBuilder.getSQLConditions(
+      this._meta, queryList, params, "AND", this.$supportForJSONOverlaps,
+    );
     if (conditions) {
       where.push(conditions);
     }
 
     if (!isSystemContext(ctx)) {
       where.push(
-        this.getSQLPermissionsCondition({
-          collection: name,
-          roles,
-          alias,
-          type: PermissionEnum.Read,
-        }),
+        SqlBuilder.getSQLPermissionsCondition(
+          this._meta,
+          { collection: name, roles, alias, type: PermissionEnum.Read },
+          (value) => this.client.quote(value),
+        ),
       );
       if (this.$sharedTables) params.push(this.$tenantId);
     }
@@ -475,9 +444,7 @@ export abstract class BaseAdapter extends EventEmitter {
       const { rows } = await this.client.query<any>(sql, params);
       const result = rows[0];
       // COUNT returns bigint, which drivers surface as a string — coerce.
-      return result?.sum !== undefined && result?.sum !== null
-        ? Number(result.sum)
-        : 0;
+      return result?.sum !== undefined && result?.sum !== null ? Number(result.sum) : 0;
     } catch (error) {
       throw this.processException(error, "Failed to count documents");
     }
@@ -500,24 +467,23 @@ export abstract class BaseAdapter extends EventEmitter {
     const alias = Query.DEFAULT_ALIAS;
 
     const queryList = [
-      ...(Array.isArray(queries)
-        ? queries
-        : queries(new QueryBuilder()).build()),
+      ...(Array.isArray(queries) ? queries : queries(new QueryBuilder()).build()),
     ];
 
-    const conditions = this.getSQLConditions(queryList, params);
+    const conditions = SqlBuilder.getSQLConditions(
+      this._meta, queryList, params, "AND", this.$supportForJSONOverlaps,
+    );
     if (conditions) {
       where.push(conditions);
     }
 
     if (!isSystemContext(ctx)) {
       where.push(
-        this.getSQLPermissionsCondition({
-          collection: name,
-          roles,
-          alias,
-          type: PermissionEnum.Read,
-        }),
+        SqlBuilder.getSQLPermissionsCondition(
+          this._meta,
+          { collection: name, roles, alias, type: PermissionEnum.Read },
+          (value) => this.client.quote(value),
+        ),
       );
       if (this.$sharedTables) params.push(this.$tenantId);
     }
@@ -550,9 +516,7 @@ export abstract class BaseAdapter extends EventEmitter {
       const { rows } = await this.client.query<any>(sql, params);
       const result = rows[0];
       // SUM of numerics may surface as a string depending on driver parsing.
-      return result?.sum !== undefined && result?.sum !== null
-        ? Number(result.sum)
-        : 0;
+      return result?.sum !== undefined && result?.sum !== null ? Number(result.sum) : 0;
     } catch (error) {
       throw this.processException(error, "Failed to sum documents");
     }
@@ -674,10 +638,7 @@ export abstract class BaseAdapter extends EventEmitter {
     return operations;
   }
 
-  /**
-   * Generates an upsert (insert or update) SQL statement for batch operations.
-   * If `attribute` is provided, it will increment that column on duplicate key.
-   */
+  /** Facade over SqlBuilder.getUpsertStatement (signature kept stable). */
   public getUpsertStatement(
     tableName: string,
     columns: string,
@@ -685,181 +646,11 @@ export abstract class BaseAdapter extends EventEmitter {
     attributes: Record<string, any>,
     attribute: string = "",
   ): string {
-    const getUpdateClause = (attribute: string, increment = false): string => {
-      const quotedAttr = this.quote(this.sanitize(attribute));
-      let newValue: string;
-      if (increment) {
-        newValue = `${this.getSQLTable(tableName)}.${quotedAttr} + EXCLUDED.${quotedAttr}`;
-      } else {
-        newValue = `EXCLUDED.${quotedAttr}`;
-      }
-      if (this.$sharedTables) {
-        return `${quotedAttr} = CASE WHEN ${this.getSQLTable(tableName)}._tenant = EXCLUDED._tenant THEN ${newValue} ELSE ${quotedAttr} END`;
-      }
-      return `${quotedAttr} = ${newValue}`;
-    };
-
-    let updateColumns: string[];
-    if (attribute) {
-      // Increment specific column by its new value in place
-      updateColumns = [
-        getUpdateClause(attribute, true),
-        getUpdateClause("_updatedAt"),
-      ];
-    } else {
-      // Update all columns
-      updateColumns = Object.keys(attributes)
-        .filter((a) => !this.$internalAttrs.includes(a))
-        .map((attr) => getUpdateClause(attr));
-    }
-
-    const sql = `
-      INSERT INTO ${this.getSQLTable(tableName)} ${columns}
-      VALUES ${batchKeys.join(", ")}
-      ON CONFLICT (_uid${this.$sharedTables ? ", _tenant" : ""}) DO UPDATE SET
-          ${updateColumns.join(", ")}
-    `;
-
-    return sql;
+    return SqlBuilder.getUpsertStatement(this._meta, tableName, columns, batchKeys, attributes, attribute, this.$internalAttrs);
   }
 
-  protected getSQLType(
-    type: AttributeEnum,
-    size?: number,
-    array?: boolean,
-  ): string {
-    let pgType: string;
-    size ??= 0;
-
-    switch (type) {
-      case AttributeEnum.String:
-        if (size > 255) {
-          pgType = "TEXT";
-        } else {
-          pgType = `VARCHAR(${size})`;
-        }
-        break;
-      case AttributeEnum.Integer:
-        if (size <= 2) {
-          // Roughly fits SMALLINT (-32768 to +32767)
-          pgType = "SMALLINT";
-        } else if (size <= 4) {
-          // Roughly fits INTEGER (-2147483648 to +2147483647)
-          pgType = "INTEGER";
-        } else {
-          // For larger integers, BIGINT is appropriate
-          pgType = "BIGINT";
-        }
-        break;
-      case AttributeEnum.Float:
-        pgType = "DOUBLE PRECISION";
-        break;
-      case AttributeEnum.Boolean:
-        pgType = "BOOLEAN";
-        break;
-      case AttributeEnum.Timestamptz:
-        pgType = "TIMESTAMP WITH TIME ZONE";
-        break;
-      case AttributeEnum.Relationship:
-        pgType = "VARCHAR(255)";
-        break;
-      case AttributeEnum.Json:
-        pgType = "JSONB";
-        break;
-      // case AttributeEnum.Virtual:
-      //   pgType = "";
-      //   break;
-      case AttributeEnum.Uuid:
-        pgType = "UUID";
-        break;
-      default:
-        throw new DatabaseException(`Unsupported attribute type: ${type}`);
-    }
-
-    if (array && pgType) {
-      return `${pgType}[]`;
-    } else {
-      return pgType;
-    }
-  }
-
-  /**
-   * @deprecated use getSQLIndex
-   */
-  protected getIndexName(coll: string, id: string): string {
-    return `${this.sanitize(coll)}_${this.sanitize(id)}`;
-  }
-
-  /**@deprecated */
-  protected getSQLCondition(query: Query, binds: any[]): string {
-    query.setAttribute(this.getInternalKeyForAttribute(query.getAttribute()));
-
-    const attribute = this.quote(this.sanitize(query.getAttribute()));
-    const alias = this.quote(Query.DEFAULT_ALIAS);
-    const method = query.getMethod();
-
-    switch (method) {
-      case QueryType.Or:
-      case QueryType.And:
-        const conditions: string[] = [];
-        for (const q of query.getValues() as Query[]) {
-          conditions.push(this.getSQLCondition(q, binds));
-        }
-
-        const methodStr = method.toUpperCase();
-        return conditions.length === 0
-          ? ""
-          : ` ${methodStr} (` + conditions.join(" AND ") + ")";
-
-      case QueryType.Search:
-        binds.push(this.getFulltextValue(query.getValue() as string));
-        return `to_tsvector('${Database.FULLTEXT_LANGUAGE}', ${alias}.${attribute}) @@ plainto_tsquery('${Database.FULLTEXT_LANGUAGE}', ?)`;
-
-      case QueryType.Between:
-        const values = query.getValues();
-        binds.push(values[0], values[1]);
-        return `${alias}.${attribute} BETWEEN ? AND ?`;
-
-      case QueryType.IsNull:
-      case QueryType.IsNotNull:
-        return `${alias}.${attribute} ${this.getSQLOperator(method)}`;
-
-      // @ts-ignore
-      case QueryType.Contains:
-        if (this.$supportForJSONOverlaps && query.onArray()) {
-          binds.push(JSON.stringify(query.getValues()));
-          return `${alias}.${attribute} @> ?::jsonb`;
-        }
-      // Fall through to default case
-
-      default:
-        const defaultConditions: string[] = [];
-        for (const value of query.getValues() as string[]) {
-          let processedValue = value;
-          switch (method) {
-            case QueryType.StartsWith:
-              processedValue = this.escapeWildcards(value) + "%";
-              break;
-            case QueryType.EndsWith:
-              processedValue = "%" + this.escapeWildcards(value);
-              break;
-            case QueryType.Contains:
-              processedValue = query.onArray()
-                ? JSON.stringify(value)
-                : "%" + this.escapeWildcards(value) + "%";
-              break;
-          }
-
-          binds.push(processedValue);
-          defaultConditions.push(
-            `${alias}.${attribute} ${this.getSQLOperator(method)} ?`,
-          );
-        }
-
-        return defaultConditions.length === 0
-          ? ""
-          : "(" + defaultConditions.join(" OR ") + ")";
-    }
+  protected getSQLType(type: AttributeEnum, size?: number, array?: boolean): string {
+    return SqlBuilder.getSQLType(type, size, array);
   }
 
   protected processException(
@@ -894,136 +685,12 @@ export abstract class BaseAdapter extends EventEmitter {
     });
   }
 
-  /**@deprecated */
-  protected getSQLOperator(method: string): string {
-    switch (method) {
-      case QueryType.Equal:
-        return "=";
-      case QueryType.NotEqual:
-        return "!=";
-      case QueryType.LessThan:
-        return "<";
-      case QueryType.LessThanEqual:
-        return "<=";
-      case QueryType.GreaterThan:
-        return ">";
-      case QueryType.GreaterThanEqual:
-        return ">=";
-      case QueryType.IsNull:
-        return "IS NULL";
-      case QueryType.IsNotNull:
-        return "IS NOT NULL";
-      case QueryType.StartsWith:
-      case QueryType.EndsWith:
-      case QueryType.Contains:
-        return "LIKE";
-      default:
-        throw new DatabaseException("Unknown method: " + method);
-    }
-  }
-
   protected getSQLTable(name: string): string {
-    if (!name) {
-      throw new DatabaseException("Failed to get SQL table: name is empty");
-    }
-    return `${this.quote(this.$schema)}.${this.quote(this.getTableName(name))}`;
-  }
-
-  protected getTableName(name: string): string {
-    if (!name) {
-      throw new DatabaseException("Failed to get table name: name is empty");
-    }
-    return `${this._meta.namespace}_${name}`;
+    return SqlBuilder.getSQLTable(this._meta, name);
   }
 
   protected getSQLIndex(table: string, name: string): string {
-    const base = `${this.$schema}_${this._meta.namespace}_${table}_${name}`;
-    // Native CryptoHasher — no Node crypto allocation on the hot path.
-    const safeId = new Bun.CryptoHasher("sha1")
-      .update(base)
-      .digest("hex")
-      .slice(0, 40);
-    return this.quote(`${safeId}`);
-  }
-
-  protected getSQLIndexType(type: IndexEnum): string {
-    switch (type) {
-      case IndexEnum.Unique:
-        return "UNIQUE";
-      case IndexEnum.FullText:
-        return "FULLTEXT";
-      case IndexEnum.Key:
-        return "INDEX";
-      default:
-        throw new DatabaseException(`Unsupported index type: ${type}`);
-    }
-  }
-
-  protected getSQLPermissionsCondition({
-    collection,
-    roles,
-    alias,
-    type = PermissionEnum.Read,
-  }: {
-    collection: string;
-    roles: readonly string[];
-    alias: string;
-    type?: PermissionEnum;
-  }): string {
-    if (!collection || !roles?.length || !alias) {
-      throw new DatabaseException(
-        "Failed to get SQL permission condition: collection, roles, and alias are required",
-      );
-    }
-
-    if (type && !Object.values(PermissionEnum).includes(type)) {
-      throw new DatabaseException(`Unknown permission type: ${type}`);
-    }
-
-    const quotedRolesArray = `ARRAY[${roles.map((role) => this.client.quote(role)).join(", ")}]::text[]`;
-
-    return `EXISTS (
-            SELECT 1
-            FROM ${this.getSQLTable(`${collection}_perms`)} p
-            WHERE p.${this.quote("_document")} = ${this.quote(alias)}.${this.quote("_id")}
-              AND p.${this.quote("_type")} = ${this.client.quote(type)}
-              AND p.${this.quote("_permissions")} && ${quotedRolesArray}
-              ${this.getTenantQuery(collection, "p")}
-        )`.trim();
-  }
-
-  /**
-   * @deprecated
-   * Builds SQL conditions recursively and mutates the provided `binds` array with bound values.
-   * @returns SQL condition string with placeholders.
-   */
-  protected getSQLConditions(
-    queries: Query[],
-    binds: any[],
-    separator: string = "AND",
-  ): string {
-    const conditions: string[] = [];
-
-    for (const query of queries) {
-      if (query.getMethod() === QueryType.Select) {
-        continue;
-      }
-
-      if (query.isNested()) {
-        conditions.push(
-          this.getSQLConditions(
-            query.getValues() as Query[],
-            binds,
-            query.getMethod(),
-          ),
-        );
-      } else {
-        conditions.push(this.getSQLCondition(query, binds));
-      }
-    }
-
-    const tmp = conditions.join(` ${separator} `);
-    return tmp === "" ? "" : `(${tmp})`;
+    return SqlBuilder.getSQLIndex(this._meta, table, name);
   }
 
   protected getTenantQuery(
@@ -1032,182 +699,15 @@ export abstract class BaseAdapter extends EventEmitter {
     tenantCount: number = 0,
     condition: string = "AND",
   ): string {
-    if (!this.$sharedTables) {
-      return "";
-    }
-
-    let dot = "";
-    let quotedAlias = alias;
-
-    if (alias !== "") {
-      dot = ".";
-      quotedAlias = this.quote(alias);
-    }
-
-    let bindings: string[] = [];
-    if (tenantCount === 0) {
-      bindings.push("?");
-    } else {
-      bindings = Array.from({ length: tenantCount }, (_) => `?`);
-    }
-    const bindingsStr = bindings.join(",");
-
-    let orIsNull = "";
-    if (collection === Database.METADATA) {
-      orIsNull = ` OR ${quotedAlias}${dot}${this.quote("_tenant")} IS NULL`;
-    }
-
-    return `${condition} (${quotedAlias}${dot}${this.quote("_tenant")} IN (${bindingsStr})${orIsNull})`;
-  }
-
-  /**
-   * Generates a projection string for attributes in a SQL SELECT query.
-   */
-  protected getAttributeProjection(
-    selections: string[],
-    prefix: string,
-    collection: string,
-  ): string {
-    if (!selections.length)
-      throw new DatabaseException("Selections are required internally.");
-
-    const projected: string[] = [];
-    selections.unshift(
-      "$id",
-      "$sequence",
-      "$schema",
-      "$collection",
-      "$createdAt",
-      "$updatedAt",
-      "$permissions",
-    );
-
-    for (let key of selections) {
-      switch (key) {
-        case "$schema":
-          projected.push(`'${this.$schema}' AS ${this.quote(key)}`);
-          break;
-        case "$collection":
-          projected.push(`'${collection}' AS ${this.quote(key)}`);
-          break;
-        default:
-          const dbKey = this.getInternalKeyForAttribute(key);
-          projected.push(
-            `${this.quote(prefix)}.${this.quote(dbKey)} AS ${this.quote(key)}`,
-          );
-      }
-    }
-
-    return projected.join(", ");
+    return SqlBuilder.getTenantQuery(this._meta, collection, alias, tenantCount, condition);
   }
 
   public quote(name: string): string {
-    if (!name) {
-      throw new DatabaseException("Failed to quote name: name is empty");
-    }
-    // Escape embedded double quotes so quoting is injection-safe by
-    // construction; sanitized identifiers ([A-Za-z0-9_-]) are unaffected.
-    return `"${name.replace(/"/g, '""')}"`;
-  }
-
-  /**@deprecated */
-  protected getAttributeSelections(
-    queries: QueryBuilder | Array<Query>,
-  ): string[] {
-    const selections: string[] = [];
-    queries = Array.isArray(queries) ? queries : queries.build();
-
-    for (const query of queries) {
-      if (query.getMethod() === QueryType.Select) {
-        selections.push(...(query.getValues() as string[]));
-      }
-    }
-
-    return selections;
+    return SqlBuilder.quote(name);
   }
 
   protected getInternalKeyForAttribute(attribute: string): string {
-    switch (attribute) {
-      case "$id":
-        return "_uid";
-      case "$sequence":
-        return "_id";
-      case "$collection":
-        return "_collection";
-      case "$tenant":
-        return "_tenant";
-      case "$createdAt":
-        return "_createdAt";
-      case "$updatedAt":
-        return "_updatedAt";
-      case "$permissions":
-        return "_permissions";
-      default:
-        return attribute;
-    }
-  }
-
-  protected getFulltextValue(value: string): string {
-    const exact = value.startsWith('"') && value.endsWith('"');
-
-    // Replace reserved chars with space
-    const specialChars = [
-      "@",
-      "+",
-      "-",
-      "*",
-      ")",
-      "(",
-      ",",
-      "<",
-      ">",
-      "~",
-      '"',
-    ];
-    let sanitized = value;
-    for (const char of specialChars) {
-      sanitized = sanitized.split(char).join(" ");
-    }
-    sanitized = sanitized.replace(/\s+/g, " ").trim();
-
-    if (!sanitized) {
-      return "";
-    }
-
-    if (exact) {
-      sanitized = `"${sanitized}"`;
-    } else {
-      sanitized += "*";
-    }
-
-    return sanitized;
-  }
-
-  protected escapeWildcards(value: string): string {
-    const wildcards = [
-      "%",
-      "_",
-      "[",
-      "]",
-      "^",
-      "-",
-      ".",
-      "*",
-      "+",
-      "?",
-      "(",
-      ")",
-      "{",
-      "}",
-      "|",
-    ];
-
-    for (const wildcard of wildcards) {
-      const escapedWildcard = wildcard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      value = value.replace(new RegExp(escapedWildcard, "g"), "\\" + wildcard);
-    }
-
-    return value;
+    return SqlBuilder.getInternalKeyForAttribute(attribute);
   }
 
   protected static POSTGRES_ROW_OVERHEAD_MIN = 24;
@@ -1337,706 +837,32 @@ export abstract class BaseAdapter extends EventEmitter {
     return Database.INTERNAL_INDEXES.length;
   }
 
-  protected readonly $internalAttrs = [
-    "$id",
-    "$sequence",
-    "$collection",
-    "$tenant",
-    "$createdAt",
-    "$updatedAt",
-    "$permissions",
-  ];
+  protected readonly $internalAttrs = INTERNAL_ATTR_KEYS;
 
-  public getJunctionTable(
-    coll: number,
-    relColl: number,
-    attr: string,
-    relAttr: string,
-  ): string {
-    return `_${coll}_${relColl}_${attr}_${relAttr}`;
+  public getJunctionTable(coll: number, relColl: number, attr: string, relAttr: string): string {
+    return SqlBuilder.getJunctionTable(coll, relColl, attr, relAttr);
   }
 
-  /**
-   * Builds a comprehensive SQL query with joins and filters for n-level relationships
-   */
-  protected buildSql(
-    query: ProcessedQuery,
-    {
-      forPermission,
-      ctx,
-    }: {
+  protected handleConditions(
+    query: (ProcessedQuery | PopulateQuery) & {
+      tableAlias?: string;
+      depth: number;
       forPermission: PermissionEnum;
       ctx: AuthContext;
     },
-  ): {
-    sql: string;
-    params: any[];
-    joins: string[];
-    selections: string[];
-  } {
-    const {
-      selections,
-      populateQueries = [],
-      filters,
-      collection,
-      ...options
-    } = query;
-    const mainTableAlias = "main";
-    const collectionName = this.sanitize(collection.getId());
-    const mainTable = this.getSQLTable(collectionName);
-
-    const cursorConditions = this.buildCursorConditions(
-      options.cursor,
-      options.cursorDirection,
-      options.orders,
-      mainTableAlias,
+  ) {
+    return SqlBuilder.handleConditions(this._meta, query, (value) =>
+      this.client.quote(value),
     );
-
-    const result = this.handleConditions({
-      populateQueries,
-      tableAlias: mainTableAlias,
-      depth: 0,
-      collection,
-      filters,
-      selections,
-      ...options,
-      forPermission,
-      ctx,
-    });
-    let orderSql = "";
-
-    if (result.orders.length) {
-      orderSql = `ORDER BY ${result.orders.join(", ")}`;
-    }
-
-    if (cursorConditions.condition) {
-      result.conditions.push(cursorConditions.condition);
-      result.params.push(...cursorConditions.params);
-    }
-
-    const limitClause = options.limit ? `LIMIT ?` : "";
-    if (options.limit) result.params.push(options.limit);
-
-    const offsetClause = options.offset ? `OFFSET ?` : "";
-    if (options.offset) result.params.push(options.offset);
-
-    const finalWhereClause =
-      result.conditions.length > 0
-        ? `WHERE ${result.conditions.join(" AND ")}`
-        : "";
-    const sql = `
-            SELECT DISTINCT ${result.selectionsSql.join(", ")}
-            FROM ${mainTable} AS ${this.quote(mainTableAlias)}
-            ${result.joins.join(" ")}
-            ${finalWhereClause}
-           ${orderSql}
-            ${limitClause}
-            ${offsetClause}
-        `
-      .trim()
-      .replace(/\s+/g, " ");
-
-    return {
-      sql,
-      selections: result.selectionsSql,
-      params: result.params,
-      joins: result.joins,
-    };
   }
 
-  /**
-   * Recursively handles building selections, joins, where conditions, and order clauses for main and populated queries.
-   */
-  protected handleConditions({
-    populateQueries = [],
-    tableAlias,
-    depth = 0,
-    forPermission,
-    ctx,
-    ...rest
-  }: (ProcessedQuery | PopulateQuery) & {
-    tableAlias?: string;
-    depth: number;
-    forPermission: PermissionEnum;
-    ctx: AuthContext;
-  }) {
-    const conditions: string[] = [];
-    const selectionsSql: string[] = [];
-    const joins: string[] = [];
-    let orders: string[] = [];
-    const params: any[] = [];
-    tableAlias = tableAlias ?? "main";
-
-    const {
-      collection,
-      filters = [],
-      selections = [],
-      orders: ordersFromQuery,
-      skipAuth,
-    } = rest;
-
-    selectionsSql.push(
-      ...this.buildSelections(selections, tableAlias, collection),
+  protected buildSql(
+    query: ProcessedQuery,
+    options: { forPermission: PermissionEnum; ctx: AuthContext },
+  ): { sql: string; params: any[]; joins: string[]; selections: string[] } {
+    return SqlBuilder.buildSql(this._meta, query, options, (value) =>
+      this.client.quote(value),
     );
-    const whereInfo = this.buildWhereConditions(
-      filters,
-      tableAlias,
-      collection.getId(),
-    );
-    if (whereInfo.conditions.length) {
-      conditions.push(...whereInfo.conditions);
-      params.push(...whereInfo.params);
-    }
-
-    if (
-      tableAlias === "main" &&
-      !isSystemContext(ctx) &&
-      !skipAuth &&
-      collection.get("documentSecurity", false)
-    ) {
-      conditions.push(
-        this.getSQLPermissionsCondition({
-          collection: collection.getId(),
-          roles: [...ctx.roles],
-          alias: tableAlias,
-          type: forPermission,
-        }),
-      );
-      if (this.$sharedTables) params.push(this.$tenantId);
-    }
-
-    if (this.$sharedTables) {
-      params.push(this.$tenantId);
-      conditions.push(
-        this.getTenantQuery(collection.getId(), tableAlias, undefined, ""),
-      );
-    }
-
-    const _orders = this.buildOrderClause(ordersFromQuery, tableAlias);
-    if (_orders.length) {
-      orders.push(..._orders);
-    }
-
-    // Recursively handle populated queries (relationships)
-    for (let i = 0; i < populateQueries.length; i++) {
-      const populateQuery: PopulateQuery = populateQueries[i]!;
-      const { attribute, authorized, ...rest } = populateQuery;
-      if (!authorized) continue;
-      const relationshipAttr = collection
-        .get("attributes", [])
-        .find(
-          (attr) =>
-            attr.get("type") === AttributeEnum.Relationship &&
-            attr.get("key", attr.getId()) === attribute,
-        );
-
-      if (!relationshipAttr) continue;
-
-      const relationAlias = `rel_${depth}_${i}`;
-      const parentAlias = tableAlias;
-      const options = relationshipAttr.get("options", {}) as RelationOptions;
-      const side = options.side;
-      const relationType = options.relationType;
-      const twoWayKey = options.twoWayKey;
-      const relationshipKey = relationshipAttr.get(
-        "key",
-        relationshipAttr.getId(),
-      );
-
-      const relatedTableName = this.sanitize(options.relatedCollection);
-      const relatedTable = this.getSQLTable(relatedTableName);
-      let junctionCollection = "";
-      if (relationType === RelationEnum.ManyToMany) {
-        const parent = side === RelationSideEnum.Parent;
-        const coll = parent
-          ? collection.getSequence()
-          : populateQuery.collection.getSequence();
-        const relColl = parent
-          ? populateQuery.collection.getSequence()
-          : collection.getSequence();
-        const attr = parent ? relationshipAttr.getId() : twoWayKey!;
-        const relAttr = parent ? twoWayKey! : relationshipAttr.getId();
-        junctionCollection = this.getJunctionTable(
-          coll,
-          relColl,
-          attr,
-          relAttr,
-        );
-      }
-
-      const joinCondition = this.buildJoinCondition(
-        relationType,
-        parentAlias,
-        relationAlias,
-        relationshipKey,
-        twoWayKey,
-        side,
-        junctionCollection,
-      );
-
-      if (joinCondition) {
-        joins.push(
-          `LEFT JOIN ${relatedTable} AS ${this.quote(relationAlias)} ON ${joinCondition}`,
-        );
-
-        if (
-          !isSystemContext(ctx) &&
-          !rest.skipAuth &&
-          rest.collection.get("documentSecurity", false)
-        ) {
-          joins.push(
-            `AND ${this.getSQLPermissionsCondition({
-              collection: relatedTableName,
-              roles: [...ctx.roles],
-              alias: relationAlias,
-              type: forPermission,
-            })}`,
-          );
-          if (this.$sharedTables) params.push(this.$tenantId);
-        }
-
-        if (this.$sharedTables) {
-          joins.push(this.getTenantQuery(relatedTableName, relationAlias));
-          params.push(this.$tenantId);
-        }
-      }
-
-      const nestedResult = this.handleConditions({
-        attribute,
-        ...rest,
-        depth: depth + 1,
-        tableAlias: relationAlias,
-        forPermission,
-        ctx,
-      });
-
-      // Prefix the selections to avoid conflicts
-      const prefixedSelections = nestedResult.selectionsSql.map((sel) => {
-        const parts = sel.split(" AS ");
-        const prefix = relationshipKey;
-        if (parts.length === 2 && parts[1]) {
-          return `${parts[0]} AS ${this.quote(`${prefix}_${parts[1].replace(/"/g, "")}`)}`;
-        }
-        return sel;
-      });
-
-      if (nestedResult.conditions.length)
-        conditions.push(...nestedResult.conditions);
-      if (nestedResult.joins.length) joins.push(...nestedResult.joins);
-      if (prefixedSelections.length) selectionsSql.push(...prefixedSelections);
-      if (nestedResult.orders.length) orders.push(...nestedResult.orders);
-      if (nestedResult.params.length) params.push(...nestedResult.params);
-    }
-
-    return {
-      conditions,
-      selectionsSql,
-      orders,
-      params,
-      joins,
-    };
-  }
-
-  /**
-   * Builds selection clauses for the main table and relationship
-   */
-  protected buildSelections(
-    selections: string[],
-    tableAlias: string,
-    collection: Doc<Collection>,
-  ): string[] {
-    const result: string[] = [];
-    const internalFields = [
-      "$id",
-      "$sequence",
-      "$createdAt",
-      "$updatedAt",
-      "$permissions",
-    ];
-    const allFields = [...new Set([...internalFields, ...selections])];
-
-    for (const field of allFields) {
-      const dbKey = this.getInternalKeyForAttribute(field);
-      const sanitizedKey = this.sanitize(dbKey);
-      result.push(
-        `${this.quote(tableAlias)}.${this.quote(sanitizedKey)} AS ${this.quote(field)}`,
-      );
-    }
-
-    if (this.$sharedTables) {
-      result.push(
-        `${this.quote(tableAlias)}.${this.quote("_tenant")} AS ${this.quote("$tenant")}`,
-      );
-    }
-
-    return result;
-  }
-
-  /**
-   * Builds JOIN condition based on relationship type
-   */
-  protected buildJoinCondition(
-    relationType: RelationEnum,
-    parentAlias: string,
-    relationAlias: string,
-    relationshipKey: string,
-    twoWayKey: string = "",
-    side: RelationSideEnum,
-    junctionCollection: string,
-  ): string | null {
-    const parentUidCol = `${this.quote(parentAlias)}.${this.quote("_uid")}`;
-    const relationUidCol = `${this.quote(relationAlias)}.${this.quote("_uid")}`;
-    const parentRelCol = `${this.quote(parentAlias)}.${this.quote(this.sanitize(relationshipKey))}`;
-    const relationRelCol = `${this.quote(relationAlias)}.${this.quote(this.sanitize(twoWayKey))}`;
-
-    switch (relationType) {
-      case RelationEnum.OneToOne:
-        if (side === RelationSideEnum.Parent) {
-          return `${parentRelCol} = ${relationUidCol}`;
-        } else {
-          return `${parentUidCol} = ${relationRelCol}`;
-        }
-
-      case RelationEnum.OneToMany:
-        if (side === RelationSideEnum.Parent) {
-          return `${parentUidCol} = ${relationRelCol}`;
-        } else {
-          return `${parentRelCol} = ${relationUidCol}`;
-        }
-
-      case RelationEnum.ManyToOne:
-        if (side === RelationSideEnum.Child) {
-          return `${parentUidCol} = ${relationRelCol}`;
-        } else {
-          return `${parentRelCol} = ${relationUidCol}`;
-        }
-
-      case RelationEnum.ManyToMany: {
-        if (!junctionCollection)
-          throw new DatabaseException(
-            "junction collection is required for many to many relation.",
-          );
-        const junctionTable = this.getSQLTable(junctionCollection);
-        const parentJoinKey = this.quote(this.sanitize(relationshipKey));
-        const relationJoinKey = this.quote(this.sanitize(twoWayKey));
-
-        return `EXISTS (
-                    SELECT 1
-                    FROM ${junctionTable} AS jt
-                    WHERE jt.${parentJoinKey} = ${parentUidCol}
-                      AND jt.${relationJoinKey} = ${relationUidCol}
-                      ${this.getTenantQuery(junctionCollection)}
-                )`;
-      }
-      default:
-        return null;
-    }
-  }
-
-  /**
-   * Builds WHERE conditions from queries
-   */
-  protected buildWhereConditions(
-    queries: Query[],
-    tableAlias: string,
-    collection: string,
-  ): { conditions: string[]; params: any[] } {
-    const conditions: string[] = [];
-    const conditionParams: any[] = [];
-
-    if (this.$sharedTables) {
-      conditions.push(
-        this.getTenantQuery(collection, tableAlias, undefined, ""),
-      );
-      conditionParams.push(this.$tenantId);
-    }
-
-    for (const query of queries) {
-      const condition = this.buildQueryCondition(query, tableAlias);
-      if (condition.sql) {
-        conditions.push(condition.sql);
-        conditionParams.push(...condition.params);
-      }
-    }
-
-    return { conditions, params: conditionParams };
-  }
-
-  /**
-   * Builds a single query condition
-   */
-  private buildQueryCondition(
-    query: Query,
-    tableAlias: string,
-  ): { sql: string; params: any[] } {
-    const method = query.getMethod();
-    const attribute = query.getAttribute();
-    const values = query.getValues();
-    const params: any[] = [];
-
-    if (method === QueryType.Select || method === QueryType.Populate) {
-      return { sql: "", params: [] };
-    }
-
-    const dbKey = this.getInternalKeyForAttribute(attribute);
-
-    let columnRef: string | undefined;
-
-    // Handle JSON path operators (->, ->>)
-    if (dbKey.includes("->>") || dbKey.includes("->")) {
-      const parts = dbKey.split(/(->>|->)/);
-      const mainColumn = parts[0]!;
-      const sanitizedMainColumn = this.sanitize(mainColumn);
-      const quotedMainColumn = `${this.quote(tableAlias)}.${this.quote(sanitizedMainColumn)}`;
-
-      let pathExpression = quotedMainColumn;
-
-      for (let i = 1; i < parts.length; i += 2) {
-        const operator = parts[i]; // -> or ->>
-        const path = parts[i + 1];
-
-        if (path) {
-          const sanitizedPath = this.sanitize(path);
-          pathExpression += `${operator}'${sanitizedPath}'`;
-        }
-      }
-
-      columnRef = pathExpression;
-    } else if (![QueryType.And, QueryType.Or].includes(method)) {
-      const sanitizedKey = this.sanitize(dbKey);
-      columnRef = `${this.quote(tableAlias)}.${this.quote(sanitizedKey)}`;
-    }
-
-    let sql = "";
-
-    switch (method) {
-      case QueryType.Equal:
-        if (values.length === 1) {
-          sql = `${columnRef} = ?`;
-          params.push(values[0]);
-        } else {
-          sql = `${columnRef} IN (${values.map(() => "?").join(", ")})`;
-          params.push(...values);
-        }
-        break;
-
-      case QueryType.NotEqual:
-        if (values.length === 1) {
-          sql = `${columnRef} != ?`;
-          params.push(values[0]);
-        } else {
-          sql = `${columnRef} NOT IN (${values.map(() => "?").join(", ")})`;
-          params.push(...values);
-        }
-        break;
-
-      case QueryType.LessThan:
-        sql = `${columnRef} < ?`;
-        params.push(values[0]);
-        break;
-
-      case QueryType.LessThanEqual:
-        sql = `${columnRef} <= ?`;
-        params.push(values[0]);
-        break;
-
-      case QueryType.GreaterThan:
-        sql = `${columnRef} > ?`;
-        params.push(values[0]);
-        break;
-
-      case QueryType.GreaterThanEqual:
-        sql = `${columnRef} >= ?`;
-        params.push(values[0]);
-        break;
-
-      case QueryType.Contains:
-      case QueryType.NotContains:
-        if (query.onArray()) {
-          sql = `${columnRef} && ?`;
-          params.push(values);
-        } else {
-          sql = `${columnRef} LIKE ?`;
-          params.push(`%${this.escapeWildcards(values[0] as string)}%`);
-        }
-        break;
-
-      case QueryType.StartsWith:
-      case QueryType.NotStartsWith:
-        sql = `${columnRef} LIKE ?`;
-        params.push(`${this.escapeWildcards(values[0] as string)}%`);
-        break;
-
-      case QueryType.EndsWith:
-      case QueryType.NotEndsWith:
-        sql = `${columnRef} LIKE ?`;
-        params.push(`%${this.escapeWildcards(values[0] as string)}`);
-        break;
-
-      case QueryType.IsNull:
-        sql = `${columnRef} IS NULL`;
-        break;
-
-      case QueryType.IsNotNull:
-        sql = `${columnRef} IS NOT NULL`;
-        break;
-
-      case QueryType.Between:
-      case QueryType.NotBetween:
-        sql = `${columnRef} BETWEEN ? AND ?`;
-        params.push(values[0], values[1]);
-        break;
-
-      case QueryType.Search:
-      case QueryType.NotSearch:
-        sql = `to_tsvector('${Database.FULLTEXT_LANGUAGE}', ${columnRef}) @@ plainto_tsquery('${Database.FULLTEXT_LANGUAGE}', ?)`;
-        params.push(values[0]);
-        break;
-
-      case QueryType.And:
-        const andConditions = (values as Query[]).map((subQuery) =>
-          this.buildQueryCondition(subQuery, tableAlias),
-        );
-        sql = `(${andConditions
-          .map((c) => c.sql)
-          .filter(Boolean)
-          .join(" AND ")})`;
-        andConditions.forEach((c) => params.push(...c.params));
-        break;
-
-      case QueryType.Or:
-        const orConditions = (values as Query[]).map((subQuery) =>
-          this.buildQueryCondition(subQuery, tableAlias),
-        );
-        sql = `(${orConditions
-          .map((c) => c.sql)
-          .filter(Boolean)
-          .join(" OR ")})`;
-        orConditions.forEach((c) => params.push(...c.params));
-        break;
-      case QueryType.Not:
-        const notCondition = this.buildQueryCondition(
-          values[0] as Query,
-          tableAlias,
-        );
-        sql = `NOT (${notCondition.sql})`;
-        params.push(...notCondition.params);
-        break;
-      default:
-        break;
-    }
-
-    switch (method) {
-      case QueryType.NotContains:
-      case QueryType.NotSearch:
-      case QueryType.NotBetween:
-      case QueryType.NotStartsWith:
-      case QueryType.NotEndsWith:
-        sql = `NOT (${sql})`;
-        break;
-      default:
-        break;
-    }
-
-    return { sql, params };
-  }
-
-  /**
-   * Builds ORDER BY clause
-   */
-  protected buildOrderClause(
-    orders: Record<string, OrderEnum>,
-    tableAlias: string,
-  ): string[] {
-    const entries = Object.entries(orders);
-    if (entries.length === 0) {
-      // Default order by _id
-      return [`${this.quote(tableAlias)}.${this.quote("_id")} ASC`];
-    }
-
-    const orderParts = entries.map(([attr, type]) => {
-      const dbKey = this.getInternalKeyForAttribute(attr);
-      const sanitizedKey = this.sanitize(dbKey);
-      const orderType = type || "ASC";
-      return `${this.quote(tableAlias)}.${this.quote(sanitizedKey)} ${orderType}`;
-    });
-
-    return orderParts;
-  }
-
-  /**
-   * Builds cursor conditions for pagination
-   */
-  protected buildCursorConditions(
-    cursor: Doc<any> | null = null,
-    cursorDirection: CursorEnum | null,
-    orders: Record<string, OrderEnum>,
-    tableAlias: string,
-  ): { condition: string; params: any[] } {
-    const uniqueOrderAttr = orders["$id"] || orders["$sequence"];
-
-    // I know this is not the good place to update the orders, but it works.
-    if (!uniqueOrderAttr) {
-      orders["$sequence"] = OrderEnum.Asc;
-    }
-
-    const orderAttributes = Object.keys(orders);
-    if (!cursor || orderAttributes.length === 0) {
-      return { condition: "", params: [] };
-    }
-
-    for (const attr of orderAttributes) {
-      const orderValue = cursor.get(attr, null);
-      if (orderValue === null) {
-        throw new OrderException(`Order attribute '${attr}' is empty`, attr);
-      }
-    }
-
-    cursorDirection ??= CursorEnum.After;
-    const conditions: string[] = [];
-    const params: any[] = [];
-    const operator = cursorDirection === CursorEnum.After ? ">" : "<";
-
-    if (orderAttributes.length === 1 && orderAttributes[0] === "$sequence") {
-      // single unique attribute
-      const attr = orderAttributes[0];
-      const dbKey = this.getInternalKeyForAttribute(attr);
-      const sanitizedKey = this.sanitize(dbKey);
-      conditions.push(
-        `${this.quote(tableAlias)}.${this.quote(sanitizedKey)} ${operator} ?`,
-      );
-      params.push(cursor.get(attr));
-    } else {
-      // multiple attributes
-      for (let i = 0; i < orderAttributes.length; i++) {
-        const attr = orderAttributes[i];
-        if (!attr) continue;
-        const dbKey = this.getInternalKeyForAttribute(attr);
-        const sanitizedKey = this.sanitize(dbKey);
-
-        const equalityConditions = orderAttributes
-          .slice(0, i)
-          .filter((prevAttr): prevAttr is string => prevAttr !== undefined)
-          .map((prevAttr) => {
-            const prevDbKey = this.getInternalKeyForAttribute(prevAttr);
-            const prevSanitizedKey = this.sanitize(prevDbKey);
-            params.push(cursor.get(prevAttr));
-            return `${this.quote(tableAlias)}.${this.quote(prevSanitizedKey)} = ?`;
-          });
-
-        equalityConditions.push(
-          `${this.quote(tableAlias)}.${this.quote(sanitizedKey)} ${operator} ?`,
-        );
-        params.push(cursor.get(attr));
-
-        conditions.push(`(${equalityConditions.join(" AND ")})`);
-      }
-    }
-
-    return {
-      condition: conditions.length > 0 ? `(${conditions.join(" OR ")})` : "",
-      params,
-    };
   }
 
   public async transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> {

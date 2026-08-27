@@ -128,6 +128,44 @@ checks.
 
 ## Core Concepts
 
+### Generated Types
+
+The type generator emits collection interfaces and an `Entities` registry that
+augments `@nuvix/db`. Generate the file from your database configuration, then
+include it with a type-only import in your application entry point:
+
+```bash
+bun run types:init
+# Edit nuvix-db.config.ts, then generate the configured collections.
+bun run generate-types
+```
+
+```typescript
+import type {} from "./types/generated.js";
+import { Database } from "@nuvix/db";
+
+declare const db: Database;
+const session = db.for("role:reader");
+
+const users = await session.find("users", (query) =>
+  query.equal("email", "reader@example.com"),
+);
+
+// With generated types loaded, unknown collection and attribute literals fail
+// at compile time. Results are inferred as Doc<Users>[].
+```
+
+The import is opt-in: it activates the generated module augmentation without a
+runtime dependency. Without generated types, collection IDs and query
+attributes remain ordinary strings and document results use the untyped
+fallback. A runtime-selected collection also keeps that fallback after the
+registry is loaded:
+
+```typescript
+declare const collectionId: string;
+const documents = await session.find(collectionId);
+```
+
 ### Collections and Attributes
 
 Collections are like tables in traditional databases. Each collection has attributes that define the structure of documents:
@@ -398,16 +436,21 @@ db.on(EventsEnum.CollectionCreate, (collection) => {
 ```
 src/
 ├── adapters/          # Database adapters (PostgreSQL)
-│   ├── adapter.ts     # Main adapter implementation
-│   ├── base.ts        # Base adapter class
+│   ├── adapter.ts     # PostgreSQL runtime DML facade
+│   ├── base.ts        # Shared adapter facade
+│   ├── ddl.ts         # PostgreSQL DDL implementation
 │   ├── postgres.ts    # PostgreSQL client wrapper
+│   ├── sql-builder.ts # Shared SELECT/condition SQL construction
 │   └── types.ts       # Adapter types
 ├── core/              # Core database functionality
-│   ├── database.ts    # Main Database class + Session (document plane)
+│   ├── database.ts    # Admin-plane facade
 │   ├── auth.ts        # AuthContext model and pure authorize()
+│   ├── document-store.ts # Document CRUD/query implementation
 │   ├── doc.ts         # Document class
 │   ├── query.ts       # Query building
 │   ├── cache.ts       # Caching layer
+│   ├── schema-manager.ts # Collection/schema implementation
+│   ├── session.ts     # Scoped document-plane facade
 │   └── enums.ts       # Type enums
 ├── errors/            # Custom error classes
 ├── utils/             # Utility functions
