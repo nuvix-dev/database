@@ -17,7 +17,8 @@
     "nuvix-db": "dist/cli/generate-types.js"
   },
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir dist --target bun && bun build ./src/cli/generate-types.ts --outdir dist/cli --target bun && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "build": "bun run clean && bun build ./src/index.ts --outdir dist --target bun && bun build ./src/cli/generate-types.ts --outdir dist/cli --target bun && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.generated-types.json",
     "prepublishOnly": "rm -rf dist && bun run build && bun run typecheck",
     "test": "bun test",
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@nuvix/cache": "^2.0.0",
     "@types/bun": "^1.4.0",
+    "tsc-alias": "1.9.2",
     "typescript": "^5.8.3"
   },
   "engines": {

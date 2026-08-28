@@ -1,4 +1,4 @@
-import type { Entities as CoreEntities } from "./types.js";
+import type { Entities as CoreEntities } from './types.js'
 
 /**
  * Public entity registry used by typed collection APIs.
@@ -10,17 +10,17 @@ import type { Entities as CoreEntities } from "./types.js";
  */
 export interface Entities extends CoreEntities {}
 
-export * from "./adapters/adapter.js";
-export * from "./core/database.js";
-export * from "./core/doc.js";
-export * from "./core/query.js";
-export * from "./core/emitter.js";
+export * from './adapters/adapter.js'
+export * from './core/database.js'
+export * from './core/doc.js'
+export * from './core/query.js'
+export * from './core/emitter.js'
+export { Session } from './core/session.js'
 // Auth context model — replaces the removed static auth class.
-// `Session` itself is exported via the ./core/database.js star export above.
-export { authorize } from "./core/auth.js";
-export type { AuthContext, SystemAuthContext } from "./core/auth.js";
-export type { Filter, RelationshipUpdates, FilterValue } from "./core/types.js";
-export type { CacheDriver, CacheOperationOptions } from "./cache/index.js";
+export { authorize } from './core/auth.js'
+export type { AuthContext, SystemAuthContext } from './core/auth.js'
+export type { Filter, RelationshipUpdates, FilterValue } from './core/types.js'
+export type { CacheDriver, CacheOperationOptions } from './cache/index.js'
 
 export {
   AttributeEnum as AttributeType,
@@ -34,12 +34,12 @@ export {
   OnDelete,
   IndexEnum as IndexType,
   CursorEnum as Cursor,
-} from "./core/enums.js";
+} from './core/enums.js'
 
-export * from "./errors/index.js";
-export * from "./types.js";
-export * from "./utils/index.js";
-export * from "./validators/index.js";
+export * from './errors/index.js'
+export * from './types.js'
+export * from './utils/index.js'
+export * from './validators/index.js'
 
 // Export config types for external use
-export type { NuvixDBConfig, CLIOptions } from "./config/types.js";
+export type { NuvixDBConfig, CLIOptions } from './config/types.js'
