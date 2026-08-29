@@ -126,6 +126,50 @@ The API is split into two planes. **Schema operations** — `db.create()`,
 `db.system()` returns a privileged session that bypasses authorization
 checks.
 
+### SQLiteAdapter
+
+`Adapter` remains the PostgreSQL adapter. For SQLite, use `SQLiteAdapter`,
+which uses Bun's built-in `bun:sqlite` driver and adds no SQLite dependency.
+
+Use an in-memory database for tests or temporary data:
+
+```typescript
+import { SQLiteAdapter } from "@nuvix/db";
+
+const adapter = new SQLiteAdapter(":memory:");
+await adapter.ping();
+await adapter.$client.disconnect();
+```
+
+Pass a file path when data must persist between runs:
+
+```typescript
+import { SQLiteAdapter } from "@nuvix/db";
+
+const adapter = new SQLiteAdapter("./app.sqlite");
+await adapter.ping();
+await adapter.$client.disconnect();
+```
+
+SQLite supports the same collection and document APIs for permissions,
+relationships, and key or unique indexes. Adapter metadata behaves as follows:
+
+- **Logical schemas** - SQLite has no PostgreSQL-style schemas. The `schema`
+  and `namespace` values form a deterministic physical table-name prefix.
+- **Shared-table tenancy** - `sharedTables` and `tenantId` scope both document
+  rows and permission records to the current tenant.
+- **Nested transactions** - Outer transactions use SQLite transactions;
+  nested `withTransaction` calls use savepoints, so failed nested work can
+  roll back without discarding successful outer work.
+
+The following PostgreSQL features are deferred for SQLite:
+
+- Fulltext indexes and fulltext search.
+- GIN-style array indexes and array-overlap queries. Index creation is rejected
+  before partial DDL is created.
+- Update-lock reads do not emit `SELECT FOR UPDATE`; they follow SQLite's
+  transaction serialization without providing PostgreSQL-style row locks.
+
 ## Core Concepts
 
 ### Generated Types

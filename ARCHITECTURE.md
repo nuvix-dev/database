@@ -1,9 +1,9 @@
 # Architecture
 
-`@nuvix/db` is a document-oriented data layer over PostgreSQL. Collections,
-attributes, relationships, and permissions are modeled as documents themselves
-and mapped onto relational tables at runtime. The library is Bun-native: the
-connection pool is Bun's built-in `SQL` client (Bun >= 1.4 required).
+`@nuvix/db` is a document-oriented data layer over PostgreSQL and SQLite.
+Collections, attributes, relationships, and permissions are modeled as
+documents themselves and mapped onto relational tables at runtime. Both
+dialects use Bun-native database clients (Bun >= 1.4 required).
 
 ## Layering
 
@@ -18,14 +18,25 @@ Application code
  ┌────▼─────────────────────────────┐
  │ SchemaManager / DocumentStore    │ validation, authorization, population
  └────┬─────────────────────────────┘
- ┌────▼─────────────────────────────┐
- │ BaseAdapter / Adapter            │ SQL execution and adapter facade
- │ SqlBuilder / Ddl                 │ SQL construction and schema changes
- └────┬─────────────────────────────┘
- ┌────▼──────────────┐
- │  PostgresClient   │ Bun SQL pool, ?→$n params, transactions
- └───────────────────┘
+ ┌────▼─────────────────────────────────────────────────────┐
+ │ Shared contracts: DatabaseAdapter / QueryClient          │
+ │ BaseAdapter: metadata, events, common document behavior  │
+ └────┬───────────────────────────────┬──────────────────────┘
+      │                               │
+ ┌────▼────────────────────┐     ┌────▼────────────────────────┐
+ │ PostgreSQL              │     │ SQLite                      │
+ │ Adapter                 │     │ SQLiteAdapter               │
+ │ SqlBuilder / Ddl        │     │ SQLiteSqlBuilder / SQLiteDdl │
+ │ PostgresClient          │     │ SQLiteClient                │
+ └─────────────────────────┘     └─────────────────────────────┘
 ```
+
+`DatabaseAdapter`, `AdapterOperations`, `QueryClient`, and
+`TransactionClient` are dialect-neutral contracts in
+`src/adapters/interface.ts`. The core depends on these contracts rather than a
+driver. `BaseAdapter` owns behavior that is safe to share; each concrete
+adapter owns dialect SQL, DDL, capability flags, error mapping, and client
+lifecycle.
 
 The core classes form an inheritance chain — `Base` → `Cache` → `Database` —
 where each level adds exactly one concern:
@@ -41,9 +52,11 @@ where each level adds exactly one concern:
 
 ## Module map
 
-| Directory | Contents |
+| Path | Contents |
 |---|---|
-| `src/adapters/` | `Adapter` and `BaseAdapter` facades, `Ddl` for schema SQL, `SqlBuilder` for shared query construction, `PostgresClient` (Bun `SQL` wrapper), `error-mapper` (SQLSTATE → typed errors) |
+| `src/adapters/interface.ts` + `base.ts` | Dialect-neutral `DatabaseAdapter`, `AdapterOperations`, `QueryClient`, and `TransactionClient` contracts; `BaseAdapter` metadata, events, and shared document behavior |
+| `src/adapters/adapter.ts` + `ddl.ts` + `sql-builder.ts` + `postgres.ts` | PostgreSQL `Adapter`, schema-qualified DDL/query generation, Bun `SQL` client, transaction wrapper, and SQLSTATE error mapping |
+| `src/adapters/sqlite-adapter.ts` + `sqlite-ddl.ts` + `sqlite-sql-builder.ts` + `sqlite.ts` | `SQLiteAdapter`, SQLite-specific DDL/query generation, deterministic logical-schema naming, Bun SQLite client, and savepoint transactions |
 | `src/core/` | `Database` and `Session` facades, `SchemaManager`, `DocumentStore`, `Cache`/`Base`, the immutable `AuthContext` model + pure `authorize()` (`auth.ts`), `Doc<T>`, `Query`, `Emitter`, relationship resolution, index manager |
 | `src/validators/` | Schema definitions (`Attribute`, `Index`, `Collection`), document structure/permission validators, query validators (`filter`, `limit`, `offset`, `order`, `cursor`, `select`, `populate`), per-type value validators |
 | `src/utils/` | ID generation, permission/role helpers, fluent `QueryBuilder`, type generator |
@@ -54,11 +67,13 @@ where each level adds exactly one concern:
 Public API surface is defined entirely by `src/index.ts`.
 
 The decomposed collaborators are implementation details. `Database` delegates
-admin-plane calls to `SchemaManager`, `Session` reaches `DocumentStore` through
-the private `documentPlane` symbol, `BaseAdapter` delegates reusable query SQL
-to `SqlBuilder`, and `Adapter` delegates schema mutations to `Ddl`. These
-facades preserve the exported API while keeping state ownership and transaction
-scope in the existing public objects.
+admin-plane calls to `SchemaManager`, and `Session` reaches `DocumentStore`
+through the private `documentPlane` symbol. `BaseAdapter` provides the common
+facade, while `Adapter` delegates PostgreSQL schema mutations to `Ddl` and
+`SQLiteAdapter` delegates SQLite mutations to `SQLiteDdl`. Query generation
+follows the same split through `SqlBuilder` and `SQLiteSqlBuilder`. These
+facades preserve the core API while keeping dialect decisions and transaction
+ownership below it.
 
 ## Read path
 
@@ -82,9 +97,22 @@ A session's `find(...)` / `getDocument(...)`:
 ## Storage model
 
 - **One table per collection.** Columns are sanitized attribute keys plus internals: `_id` ($id), `$sequence`, `$createdAt`, `$updatedAt`, `_uid` (stable row identity used for join reassembly). A `_tenant` column is added for shared tables.
-- **Naming**: tables are schema-qualified as `"{schema}"."{namespace}_{collection}"`. Index names use `{schema}_{namespace}_{table}_{index}` and are shortened with a SHA1 suffix when they exceed PostgreSQL's 63-character identifier limit.
+- **PostgreSQL naming**: physical schemas provide isolation, so tables are
+  rendered as `"{schema}"."{namespace}_{collection}"`. Index names derive from
+  schema, namespace, table, and index identity and are shortened with a SHA-1
+  suffix when they exceed PostgreSQL's 63-character identifier limit.
+- **SQLite naming**: SQLite has no equivalent physical schema namespace. The
+  logical schema and namespace are encoded into every table prefix as
+  `<sanitized-schema>_<sanitized-namespace>_<sha1-12(schema + NUL + namespace)>`;
+  the collection name is appended as `_<sanitized-collection>`. The same
+  inputs always produce the same name, while different logical schemas or
+  namespaces retain distinct hash identities even when sanitization collides.
+  Indexes likewise include schema, namespace, table, and index identity with a
+  20-character SHA-1 suffix.
 - **Permissions live in a side table** `<collection>_perms` (`_type`, `_permissions`, `_document`) keyed by document sequence. This keeps main rows narrow and lets permission checks execute as pure SQL rather than in application code.
-- **JSON attributes** are queried with `->` / `->>` path operators; fulltext indexes are `tsvector` expressions.
+- **Dialect storage**: PostgreSQL uses native `JSONB`, arrays, `->` / `->>`
+  operators, and `tsvector` fulltext indexes. SQLite stores JSON and array
+  values as text and emits only SQLite-compatible query expressions.
 
 ## Multi-tenancy
 
@@ -131,7 +159,44 @@ Document operations live on `Session`, not on `Database`. Callers obtain a sessi
 
 ## Transactions
 
-`session.withTransaction(async (tx) => ...)` constructs a fresh, independently-owned `Database` scope bound to a transaction-scoped adapter, so every operation inside shares one transaction. The scope owns all mutable state itself — filters, caches, relation stack, listeners and its own document-plane closures; scalar configuration is copied by value and containers are freshly created, never shared with the parent. This replaces an earlier prototype-clone approach that aliased symbol-keyed closures and let session operations escape the transaction. The transaction session preserves the parent's `AuthContext`, so authorization behaves identically inside and outside the callback. Bulk operations chunk internally and run per-chunk transactions with per-document `onNext`/`onError` callbacks.
+`session.withTransaction(async (tx) => ...)` constructs a fresh,
+independently-owned `Database` scope bound to a transaction-scoped adapter, so
+every operation inside uses the transaction client. The scope preserves the
+parent's `AuthContext`, metadata, listeners, filters, and SQL transformations,
+but owns fresh mutable containers and document-plane closures. Concurrent or
+nested scopes therefore cannot leak state or escape onto the parent client.
+
+The client layer owns transaction boundaries:
+
+1. PostgreSQL delegates the outer lifecycle and dedicated pooled connection to
+   Bun's `sql.begin()`; nested calls use savepoints on that connection.
+2. SQLite serializes access to its single handle for the full async callback.
+   `SQLiteClient` owns `BEGIN`, `COMMIT`, and outer `ROLLBACK`.
+3. A nested SQLite transaction reuses the active `SQLiteTransaction` and owns a
+   uniquely named `nuvix_sp_N` savepoint. Success releases it; failure performs
+   `ROLLBACK TO SAVEPOINT` followed by `RELEASE SAVEPOINT`, then rethrows so the
+   caller may decide whether outer work continues.
+
+Bulk operations chunk internally and run per-chunk transactions with
+per-document `onNext`/`onError` callbacks.
+
+## Dialect parity
+
+The shared adapter contract covers collection and attribute DDL, document CRUD
+and bulk operations, supported filters and pagination, key/unique indexes,
+relationships, permissions, shared-table tenancy, and nested transactions.
+Parity means these behaviors have the same core contract, not that both engines
+accept the same SQL or expose every PostgreSQL feature.
+
+| Boundary | PostgreSQL `Adapter` | `SQLiteAdapter` |
+|---|---|---|
+| Fulltext index and search | Native `tsvector` support | Deferred; rejects fulltext indexes and searches explicitly |
+| GIN and array-overlap queries | Native arrays and GIN-backed overlap | Deferred; rejects GIN-style array overlap explicitly |
+| Update locks | Emits `SELECT ... FOR UPDATE` | Deferred; uses SQLite transaction serialization without row locks |
+
+SQLite never emits PostgreSQL syntax for deferred behavior. Unsupported index
+and query forms report an explicit `DatabaseException`; update-lock reads use
+the documented no-lock contract.
 
 ## Query validation
 

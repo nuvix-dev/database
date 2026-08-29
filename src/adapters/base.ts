@@ -11,7 +11,8 @@ import type { IEntity } from "types.js";
 import { Logger } from "@utils/logger.js";
 import { AuthContext } from "@core/auth.js";
 import { Collection } from "@validators/schema.js";
-import type { DatabaseError, PostgresClient, Transaction } from "./postgres.js";
+import type { QueryClient } from "./interface.js";
+import type { DatabaseError } from "./types.js";
 import { EventEmitter } from "node:events";
 import { INTERNAL_ATTR_KEYS, SqlBuilder } from "./sql-builder.js";
 
@@ -22,7 +23,7 @@ const isSystemContext = (ctx: AuthContext): boolean =>
 export abstract class BaseAdapter extends EventEmitter {
   public readonly type: string = "base";
   protected _meta: Partial<Meta> = { schema: "public" };
-  protected abstract client: PostgresClient | Transaction;
+  protected abstract client: QueryClient;
   protected $logger = new Logger();
 
   protected $timeout: number = 0;
@@ -660,7 +661,7 @@ export abstract class BaseAdapter extends EventEmitter {
     return processException(error, message);
   }
 
-  readonly $supportForTimeouts = true;
+  readonly $supportForTimeouts: boolean = true;
   public get $internalIndexesKeys() {
     return ["primary", "_created_at", "_updated_at", "_tenant_id"];
   }
@@ -882,7 +883,7 @@ export abstract class BaseAdapter extends EventEmitter {
     });
   }
 
-  protected abstract createTransactionAdapter(client: any): this;
+  protected abstract createTransactionAdapter(client: QueryClient): this;
 }
 
 export interface Meta {

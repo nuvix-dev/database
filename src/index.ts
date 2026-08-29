@@ -11,6 +11,8 @@ import type { Entities as CoreEntities } from './types.js'
 export interface Entities extends CoreEntities {}
 
 export * from './adapters/adapter.js'
+export { SQLiteAdapter } from './adapters/sqlite-adapter.js'
+export type { SQLiteAdapterConfig } from './adapters/sqlite-adapter.js'
 export * from './core/database.js'
 export * from './core/doc.js'
 export * from './core/query.js'

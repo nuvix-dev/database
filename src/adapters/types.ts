@@ -12,6 +12,23 @@ import { Query } from "@core/query.js";
 import { QueryBuilder } from "@utils/query-builder.js";
 import { Attribute } from "@validators/schema.js";
 
+/** Dialect-neutral result returned by adapter query clients. */
+export interface QueryResult<T = Record<string, unknown>> {
+  rows: T[];
+  rowCount: number;
+}
+
+/** Common database error metadata used by adapter exception mapping. */
+export interface DatabaseError extends Error {
+  code?: string;
+  severity?: string;
+  detail?: string;
+  hint?: string;
+  constraint?: string;
+  table?: string;
+  column?: string;
+}
+
 export type CreateAttribute = {
   collection: string;
   key: string;

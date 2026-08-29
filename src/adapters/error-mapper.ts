@@ -15,6 +15,8 @@ import {
 } from "@errors/index.js";
 import type { DatabaseError } from "./postgres.js";
 
+export { processSQLiteException } from "./sqlite-error-mapper.js";
+
 /**
  * Maps a caught error to a typed exception and throws it.
  *

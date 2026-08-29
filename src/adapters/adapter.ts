@@ -7,7 +7,11 @@ import {
   RelationEnum,
   RelationSideEnum,
 } from "@core/enums.js";
-import { CreateCollectionOptions } from "./interface.js";
+import type {
+  CreateCollectionOptions,
+  DatabaseAdapter,
+  QueryClient,
+} from "./interface.js";
 import { DatabaseException } from "@errors/base.js";
 import { Database, ProcessedQuery } from "@core/database.js";
 import { AuthContext } from "@core/auth.js";
@@ -20,7 +24,7 @@ import {
 } from "./types.js";
 import { Ddl } from "./ddl.js";
 
-export class Adapter extends BaseAdapter {
+export class Adapter extends BaseAdapter implements DatabaseAdapter {
   protected client: PostgresClient | Transaction;
 
   /** Schema-plane DDL emitters — see ./ddl.ts. One-way dep: ddl never imports adapter. */
@@ -922,7 +926,7 @@ export class Adapter extends BaseAdapter {
     }
   }
 
-  protected createTransactionAdapter(client: PostgresClient | Transaction): this {
+  protected createTransactionAdapter(client: QueryClient): this {
     const adapter = new (this.constructor as any)(client) as this;
 
     // Own copies of mutable configuration so concurrent transactions cannot

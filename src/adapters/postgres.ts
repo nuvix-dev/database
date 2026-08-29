@@ -2,30 +2,10 @@ import { SQL } from "bun";
 import { TransactionException } from "@errors/index.js";
 import { Logger } from "@utils/logger.js";
 import { JsonParam } from "./types.js";
+import type { QueryClient, TransactionClient } from "./interface.js";
+import type { DatabaseError, QueryResult } from "./types.js";
 
-/**
- * Minimal structural type for PostgreSQL server errors surfaced by Bun.sql.
- * Carries the SQLSTATE in `code`, matching the codes handled by
- * BaseAdapter.processException().
- */
-export interface DatabaseError extends Error {
-  code?: string;
-  severity?: string;
-  detail?: string;
-  hint?: string;
-  constraint?: string;
-  table?: string;
-  column?: string;
-}
-
-/**
- * Result shape compatible with the previous `pg` driver so that all
- * existing `const { rows } = await client.query(...)` call sites keep working.
- */
-export interface QueryResult<T = any> {
-  rows: T[];
-  rowCount: number;
-}
+export type { DatabaseError, QueryResult } from "./types.js";
 
 /**
  * Converts `?` placeholders (used throughout the SQL builders) into
@@ -184,7 +164,7 @@ function isRetryable(err: unknown): boolean {
  * connection release) is owned by `sql.begin()`; this handle only exposes
  * query execution and savepoint-based nesting.
  */
-export class Transaction {
+export class Transaction implements TransactionClient {
   readonly __type = "transaction";
   private savepointCount = 0;
 
@@ -213,7 +193,10 @@ export class Transaction {
   /**
    * Nested transaction — implemented as a savepoint on the same connection.
    */
-  async transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> {
+  async transaction<T>(
+    callback: (tx: this) => Promise<T>,
+    _maxRetries?: number,
+  ): Promise<T> {
     const spName = await this.savepoint();
     try {
       const result = await callback(this);
@@ -302,7 +285,7 @@ function bindValues(values?: unknown[]): unknown[] | undefined {
  * Main Database Client — thin wrapper around Bun's native SQL client
  * (`Bun.sql`) providing the legacy query interface used by the adapters.
  */
-export class PostgresClient {
+export class PostgresClient implements QueryClient {
   readonly __type = "postgres";
   private readonly sql: SQL;
   private readonly databaseName: string;

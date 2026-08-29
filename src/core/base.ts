@@ -19,7 +19,8 @@ import {
   NotFoundException,
 } from "@errors/index.js";
 import { Structure } from "@validators/structure.js";
-import { Adapter } from "@adapters/adapter.js";
+import type { DatabaseAdapter } from "@adapters/interface.js";
+import type { Adapter } from "@adapters/adapter.js";
 import { PopulateQuery, ProcessedQuery } from "./database.js";
 import { Logger, LoggerOptions } from "@utils/logger.js";
 import {
@@ -162,7 +163,7 @@ export abstract class Base<
     PermissionEnum.Delete,
   ];
 
-  protected readonly adapter: Adapter;
+  protected readonly adapter: DatabaseAdapter;
   protected readonly cache: CacheDriver;
 
   protected static filters: Filters = {};
@@ -188,7 +189,11 @@ export abstract class Base<
 
   protected readonly logger: Logger;
 
-  constructor(adapter: Adapter, cache: CacheDriver, options: Options = {}) {
+  constructor(
+    adapter: DatabaseAdapter,
+    cache: CacheDriver,
+    options: Options = {},
+  ) {
     super();
     this.adapter = adapter;
     this.cache = cache;
@@ -227,8 +232,8 @@ export abstract class Base<
     return { ...Base.filters, ...this.instanceFilters };
   }
 
-  public getAdapter(): Adapter {
-    return this.adapter;
+  public getAdapter<TAdapter extends DatabaseAdapter = Adapter>(): TAdapter {
+    return this.adapter as TAdapter;
   }
 
   public enableFilters(): this {
@@ -498,7 +503,7 @@ export abstract class Base<
    * Scalar configuration is copied by value; mutable containers are freshly
    * created and seeded from this instance, never shared by reference.
    */
-  protected abstract createTransactionalScope(txAdapter: Adapter): this;
+  protected abstract createTransactionalScope(txAdapter: DatabaseAdapter): this;
 
   public get ping() {
     return this.adapter.ping();

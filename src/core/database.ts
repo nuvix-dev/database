@@ -41,7 +41,7 @@ import { Documents } from "@validators/queries/documents.js";
 import { authorize, AuthContext, SYSTEM_CONTEXT } from "./auth.js";
 import { ID } from "@utils/id.js";
 import { Structure } from "@validators/structure.js";
-import { Adapter } from "@adapters/adapter.js";
+import type { DatabaseAdapter } from "@adapters/interface.js";
 import { MethodType } from "@validators/query/base.js";
 import {
   createRelationships,
@@ -125,7 +125,7 @@ export class Database extends Cache {
    * by reference. Per-operation guards (`_relationStack`) and caches
    * (`decodeAttributesCache`) intentionally start fresh.
    */
-  protected createTransactionalScope(txAdapter: Adapter): this {
+  protected createTransactionalScope(txAdapter: DatabaseAdapter): this {
     const scope = new Database(txAdapter, this.cache, {
       filters: { ...this.instanceFilters },
       logger: this.logger,
@@ -154,7 +154,7 @@ export class Database extends Cache {
   }
 
   constructor(
-    adapter: Adapter,
+    adapter: DatabaseAdapter,
     cache: CacheDriver,
     options: DatabaseOptions = {},
   ) {

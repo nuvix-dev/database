@@ -23,13 +23,15 @@ import {
   RelationEnum,
   RelationSideEnum,
 } from "@core/enums.js";
-import { CreateCollectionOptions } from "./interface.js";
+import type {
+  CreateCollectionOptions,
+  QueryClient,
+} from "./interface.js";
 import { DatabaseException } from "@errors/base.js";
 import { Database } from "@core/database.js";
 import { Doc } from "@core/doc.js";
 import { Attribute } from "@validators/schema.js";
 import { processException } from "./error-mapper.js";
-import { PostgresClient, Transaction } from "./postgres.js";
 import {
   ColumnInfo,
   CreateAttribute,
@@ -47,7 +49,7 @@ export interface DdlContext {
   readonly $schema: string;
   readonly $sharedTables: boolean;
   readonly $namespace: string;
-  readonly $client: PostgresClient | Transaction;
+  readonly $client: QueryClient;
   sanitize(value: string): string;
   quote(name: string): string;
   trigger(event: EventsEnum, query: string): string;
@@ -282,7 +284,7 @@ export class Ddl {
     );
 
     try {
-      const callback = async (tx: Transaction | PostgresClient) => {
+      const callback = async (tx: QueryClient) => {
         await tx.query(tableSql);
         for (const sql of postTableIndexes) {
           await tx.query(sql);

@@ -371,7 +371,7 @@ export class DocumentStore implements DocumentPlane {
         queryWithId,
       );
       const processedDocuments = this.processFindResults(
-        documents as Doc<any>[],
+        documents as unknown as Doc<any>[],
         queryWithId,
       );
       doc = processedDocuments[0] || new Doc();
@@ -1787,8 +1787,13 @@ export class DocumentStore implements DocumentPlane {
       return [];
     }
 
-    const rows = await this.adapter.find(ctx, collectionId, processedQueries);
-    const result = this.processFindResults(rows as Doc<any>[], processedQueries);
+    const rows = await this.adapter.find(ctx, collectionId, processedQueries, {
+      forPermission,
+    });
+    const result = this.processFindResults(
+      rows as unknown as Doc<any>[],
+      processedQueries,
+    );
 
     const castedResult = result.map((doc) => this.cast(collection, doc));
     const documents = await Promise.all(
