@@ -7,6 +7,24 @@ import type { DatabaseError, QueryResult } from "./types.js";
 
 export type { DatabaseError, QueryResult } from "./types.js";
 
+function isSqlClient(value: unknown): value is SQL {
+  if (
+    (typeof value !== "object" || value === null) &&
+    typeof value !== "function"
+  ) {
+    return false;
+  }
+
+  return (
+    "unsafe" in value &&
+    typeof value.unsafe === "function" &&
+    "begin" in value &&
+    typeof value.begin === "function" &&
+    "close" in value &&
+    typeof value.close === "function"
+  );
+}
+
 /**
  * Converts `?` placeholders (used throughout the SQL builders) into
  * PostgreSQL `$1..$n` positional parameters expected by Bun.sql.
@@ -288,6 +306,7 @@ function bindValues(values?: unknown[]): unknown[] | undefined {
 export class PostgresClient implements QueryClient {
   readonly __type = "postgres";
   private readonly sql: SQL;
+  private readonly ownsSql: boolean;
   private readonly databaseName: string;
 
   constructor(config: SQL | string | Record<string, unknown>) {
@@ -320,8 +339,9 @@ export class PostgresClient implements QueryClient {
       );
     };
 
-    if (config instanceof SQL) {
+    if (isSqlClient(config)) {
       this.sql = config;
+      this.ownsSql = false;
     } else if (typeof config === "string") {
       this.sql = new SQL({
         url: config,
@@ -330,6 +350,7 @@ export class PostgresClient implements QueryClient {
         onconnect: onConnect,
         onclose: onClose,
       });
+      this.ownsSql = true;
     } else {
       const options = {
         ...lifecycle,
@@ -339,6 +360,7 @@ export class PostgresClient implements QueryClient {
       if (options["onconnect"] === undefined) options["onconnect"] = onConnect;
       if (options["onclose"] === undefined) options["onclose"] = onClose;
       this.sql = new SQL(options as never);
+      this.ownsSql = true;
     }
     this.databaseName = extractDatabaseName(this.sql, config);
   }
@@ -406,6 +428,7 @@ export class PostgresClient implements QueryClient {
   }
 
   async disconnect(): Promise<void> {
+    if (!this.ownsSql) return;
     // Graceful shutdown: wait for in-flight queries to settle before the
     // process tears the pool down. Timeout is in seconds.
     const timeout = optionalEnvNumber("PG_CLOSE_TIMEOUT") ?? 10;
