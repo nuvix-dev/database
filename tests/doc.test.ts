@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
-import { Doc, DocException, IEntity } from "../dist/index.js";
+import { Doc, DocException, IEntity } from "../src/index.js";
 
 describe("Doc Class", () => {
   describe("Constructor", () => {
@@ -413,7 +413,8 @@ describe("Doc Class", () => {
 
     test("createdAt() should convert string to Date", () => {
       const dateString = "2024-01-01T00:00:00.000Z";
-      const doc = new Doc({ $id: "test", $createdAt: dateString });
+      const date = new Date(dateString);
+      const doc = new Doc({ $id: "test", $createdAt: date });
       const result = doc.createdAt();
 
       expect(result).toBeInstanceOf(Date);
@@ -433,11 +434,11 @@ describe("Doc Class", () => {
 
     test("updatedAt() should convert string to Date", () => {
       const dateString = "2024-01-01T12:00:00.000Z";
-      const doc = new Doc({ $id: "test", $updatedAt: dateString });
+      const doc = new Doc({ $id: "test", $updatedAt: new Date(dateString) });
       const result = doc.updatedAt();
 
       expect(result).toBeInstanceOf(Date);
-      expect(result?.toISOString()).toBe(dateString);
+      expect(result.toISOString()).toBe(dateString);
     });
 
     test("updatedAt() should return null when not set", () => {

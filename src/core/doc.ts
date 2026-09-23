@@ -263,23 +263,27 @@ export class Doc<
   /**
    * Gets the creation date, or null if not set. If the value is a string, it is converted to a Date object.
    */
-  public createdAt<V extends T["$createdAt"]>(): V {
+  public createdAt<V extends T["$createdAt"]>(): V extends undefined
+    ? null
+    : V {
     const value = this.get("$createdAt", null);
     if (typeof value === "string") {
-      return new Date(value) as V;
+      return new Date(value) as Exclude<V, undefined>;
     }
-    return value as unknown as V;
+    return value as unknown as Exclude<V, undefined>;
   }
 
   /**
    * Gets the last updated date, or null if not set. If the value is a string, it is converted to a Date object.
    */
-  public updatedAt<V extends T["$updatedAt"]>(): V {
+  public updatedAt<V extends T["$updatedAt"]>(): V extends undefined
+    ? null
+    : V {
     const value = this.get("$updatedAt", null);
     if (typeof value === "string") {
-      return new Date(value) as V;
+      return new Date(value) as Exclude<V, undefined>;
     }
-    return value as unknown as V;
+    return value as unknown as Exclude<V, undefined>;
   }
 
   /**
