@@ -13,8 +13,8 @@ describe("generateTypes", () => {
     const result = generateTypes([]);
 
     expect(result).toContain("$id: string");
-    expect(result).toContain("$createdAt: Date | string | null");
-    expect(result).toContain("$updatedAt: Date | string | null");
+    expect(result).toContain("$createdAt: Date;");
+    expect(result).toContain("$updatedAt: Date;");
     expect(result).toContain("$permissions: string[]");
     expect(result).toContain("$sequence: number");
     expect(result).toContain("$collection: string");
@@ -102,8 +102,8 @@ describe("generateTypes", () => {
     expect(result).toContain("int_field: number");
     expect(result).toContain("float_field: number");
     expect(result).toContain("bool_field: boolean");
-    expect(result).toContain("timestamp_field: string | Date");
-    expect(result).toContain("json_field: Record<string, any>");
+    expect(result).toContain("timestamp_field: Date");
+    expect(result).toContain("json_field: Record<string, unknown>");
     expect(result).toContain("uuid_field: string");
     expect(result).toContain("virtual_field: never");
   });
@@ -481,7 +481,7 @@ describe("generateTypes", () => {
     expect(result).toContain("tags?: string[]");
     expect(result).toContain('status: "draft" | "published"');
     expect(result).toContain("author_id: Users['$id']");
-    expect(result).toContain("metadata?: Record<string, any>");
+    expect(result).toContain("metadata?: Record<string, unknown>");
   });
 
   it("handles edge cases in pascalCase conversion", () => {
@@ -728,6 +728,345 @@ describe("generateTypes", () => {
       expect(result).toContain("@max 120");
       expect(result).toContain("@optional");
       expect(result).toContain("@array");
+    });
+  });
+
+  describe("__type in attributes", () => {
+    it("respects __type override on string attributes", () => {
+      const collection = {
+        $id: "users",
+        name: "users",
+        $collection: "users",
+        attributes: [
+          {
+            $id: "email",
+            key: "email",
+            type: AttributeEnum.String,
+            __type: "EmailAddress",
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection]);
+      expect(result).toContain("email: EmailAddress;");
+    });
+
+    it("respects __type override on integer and number attributes", () => {
+      const collection = {
+        $id: "accounts",
+        name: "accounts",
+        $collection: "accounts",
+        attributes: [
+          {
+            $id: "balance",
+            key: "balance",
+            type: AttributeEnum.Integer,
+            __type: "Cents",
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection]);
+      expect(result).toContain("balance: Cents;");
+    });
+
+    it("respects __type override on relationship attributes", () => {
+      const collection = {
+        $id: "posts",
+        name: "posts",
+        $collection: "posts",
+        attributes: [
+          {
+            $id: "author",
+            key: "author",
+            type: AttributeEnum.Relationship,
+            options: {
+              relatedCollection: "users",
+            },
+            __type: "UserSummary",
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection]);
+      expect(result).toContain("author: UserSummary;");
+    });
+
+    it("handles __type with array attributes and unions properly", () => {
+      const collection = {
+        $id: "items",
+        name: "items",
+        $collection: "items",
+        attributes: [
+          {
+            $id: "tags",
+            key: "tags",
+            type: AttributeEnum.String,
+            __type: "Tag",
+            required: true,
+            array: true,
+          },
+          {
+            $id: "statuses",
+            key: "statuses",
+            type: AttributeEnum.String,
+            __type: "'open' | 'closed'",
+            required: true,
+            array: true,
+          },
+          {
+            $id: "custom_list",
+            key: "custom_list",
+            type: AttributeEnum.String,
+            __type: "string[]",
+            required: true,
+            array: true,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection]);
+      expect(result).toContain("tags: Tag[];");
+      expect(result).toContain("statuses: ('open' | 'closed')[];");
+      expect(result).toContain("custom_list: string[];");
+      expect(result).not.toContain("string[][];");
+    });
+  });
+
+  describe("filterTypes in config and options", () => {
+    it("generates the first filter type when registered in filterTypes", () => {
+      const collection = {
+        $id: "articles",
+        name: "articles",
+        $collection: "articles",
+        attributes: [
+          {
+            $id: "content",
+            key: "content",
+            type: AttributeEnum.String,
+            filters: ["markdown"],
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection], {
+        filterTypes: {
+          markdown: "MarkdownHtml",
+        },
+      });
+
+      expect(result).toContain("content: MarkdownHtml;");
+      expect(result).toContain("@filter markdown");
+    });
+
+    it("generates the first filter type when multiple filters are defined", () => {
+      const collection = {
+        $id: "users",
+        name: "users",
+        $collection: "users",
+        attributes: [
+          {
+            $id: "settings",
+            key: "settings",
+            type: AttributeEnum.String,
+            filters: ["userSettings", "compress", "encrypt"],
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection], {
+        filterTypes: {
+          userSettings: "UserSettingsRecord",
+          compress: "CompressedString",
+          encrypt: "EncryptedBuffer",
+        },
+      });
+
+      // The FIRST filter determines the entity's application-level type
+      expect(result).toContain("settings: UserSettingsRecord;");
+      expect(result).toContain("@filters userSettings, compress, encrypt");
+    });
+
+    it("falls back to standard type when the first filter is not in filterTypes", () => {
+      const collection = {
+        $id: "users",
+        name: "users",
+        $collection: "users",
+        attributes: [
+          {
+            $id: "token",
+            key: "token",
+            type: AttributeEnum.String,
+            filters: ["unknownCustomFilter"],
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection], {
+        filterTypes: {
+          differentFilter: "SomeType",
+        },
+      });
+
+      expect(result).toContain("token: string;");
+    });
+
+    it("prioritizes __type over filterTypes when both are present", () => {
+      const collection = {
+        $id: "articles",
+        name: "articles",
+        $collection: "articles",
+        attributes: [
+          {
+            $id: "body",
+            key: "body",
+            type: AttributeEnum.String,
+            filters: ["markdown"],
+            __type: "ExplicitBodyType",
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection], {
+        filterTypes: {
+          markdown: "MarkdownHtml",
+        },
+      });
+
+      expect(result).toContain("body: ExplicitBodyType;");
+    });
+
+    it("handles filterTypes with arrays and optional fields", () => {
+      const collection = {
+        $id: "documents",
+        name: "documents",
+        $collection: "documents",
+        attributes: [
+          {
+            $id: "tags",
+            key: "tags",
+            type: AttributeEnum.String,
+            filters: ["customTag"],
+            required: false,
+            array: true,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection], {
+        filterTypes: {
+          customTag: "TagObject",
+        },
+      });
+
+      expect(result).toContain("tags?: TagObject[];");
+    });
+  });
+
+  describe("clean type generation and removing unuseful things", () => {
+    it("does not emit empty section headers for empty collections", () => {
+      const result = generateTypes([]);
+
+      expect(result).not.toContain("// Utility Types");
+      expect(result).not.toContain("// Query Types");
+      expect(result).not.toContain("// Input Types");
+      expect(result).not.toContain("// Document Types");
+      expect(result).not.toContain("// Validation Types");
+    });
+
+    it("does not generate unuseful Pick and Omit boilerplate wrappers", () => {
+      const collection = {
+        $id: "users",
+        name: "users",
+        $collection: "users",
+        attributes: [
+          {
+            $id: "name",
+            key: "name",
+            type: AttributeEnum.String,
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection]);
+
+      expect(result).not.toContain("UsersPick");
+      expect(result).not.toContain("UsersOmit");
+      expect(result).toContain("export type UsersCreate =");
+      expect(result).toContain("export type UsersUpdate =");
+    });
+
+    it("omits internal system fields cleanly in Create input types", () => {
+      const collection = {
+        $id: "users",
+        name: "users",
+        $collection: "users",
+        attributes: [
+          {
+            $id: "name",
+            key: "name",
+            type: AttributeEnum.String,
+            required: true,
+            array: false,
+          },
+        ],
+        indexes: [],
+        enabled: true,
+        documentSecurity: false,
+      };
+
+      const result = generateTypes([collection]);
+
+      expect(result).toContain(
+        "export type UsersCreate = Omit<Users, '$id' | '$createdAt' | '$updatedAt' | '$permissions' | '$sequence' | '$collection' | '$tenant' | '$schema'>;",
+      );
+      expect(result).toContain("export type UsersInput = UsersCreate;");
     });
   });
 });

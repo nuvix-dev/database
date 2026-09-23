@@ -13,7 +13,7 @@ const typeMap: Record<AttributeEnum, string> = {
   [AttributeEnum.Uuid]: "string",
 };
 
-interface TypeGenerationOptions {
+export interface TypeGenerationOptions {
   includeImports?: boolean;
   includeDocTypes?: boolean;
   includeEntityMap?: boolean;
@@ -23,6 +23,7 @@ interface TypeGenerationOptions {
   generateInputTypes?: boolean;
   generateValidationTypes?: boolean;
   includeMetaDataTypes?: boolean;
+  filterTypes?: Record<string, string>;
 }
 
 /**
@@ -49,11 +50,12 @@ export function generateTypes(
     includeDocTypes = true,
     includeEntityMap = true,
     generateUtilityTypes = true,
-    generateQueryTypes = true,
+    generateQueryTypes = false,
     generateInputTypes = true,
     generateValidationTypes = false,
     includeMetaDataTypes = false,
     packageName = "@nuvix/db",
+    filterTypes = {},
   } = options;
 
   const parts: string[] = [];
@@ -70,12 +72,12 @@ export function generateTypes(
 
   // Individual entity interfaces
   const entityInterfaces = collections.map((col) => {
-    return generateEntityInterface(col, collections);
+    return generateEntityInterface(col, collections, filterTypes);
   });
   parts.push(...entityInterfaces);
 
   // Doc type aliases for each collection
-  if (includeDocTypes) {
+  if (includeDocTypes && collections.length > 0) {
     const docTypes = collections.map((col) => {
       const interfaceName = pascalCase(col.name);
       const docTypeName = `${interfaceName}Doc`;
@@ -88,7 +90,7 @@ export function generateTypes(
   }
 
   // Utility types
-  if (generateUtilityTypes) {
+  if (generateUtilityTypes && collections.length > 0) {
     const utilityTypes = generateUtilityTypesInternal(collections);
     if (utilityTypes) {
       parts.push(utilityTypes);
@@ -96,7 +98,7 @@ export function generateTypes(
   }
 
   // Query types
-  if (generateQueryTypes) {
+  if (generateQueryTypes && collections.length > 0) {
     const queryTypes = generateQueryTypesInternal(collections);
     if (queryTypes) {
       parts.push(queryTypes);
@@ -104,7 +106,7 @@ export function generateTypes(
   }
 
   // Input types
-  if (generateInputTypes) {
+  if (generateInputTypes && collections.length > 0) {
     const inputTypes = generateInputTypesInternal(collections);
     if (inputTypes) {
       parts.push(inputTypes);
@@ -112,7 +114,7 @@ export function generateTypes(
   }
 
   // Validation types
-  if (generateValidationTypes) {
+  if (generateValidationTypes && collections.length > 0) {
     const validationTypes = generateValidationTypesInternal(collections);
     if (validationTypes) {
       parts.push(validationTypes);
@@ -126,7 +128,7 @@ export function generateTypes(
   }
 
   // Collection metadata
-  if (includeMetaDataTypes) {
+  if (includeMetaDataTypes && collections.length > 0) {
     const collectionMeta = generateCollectionMetadata(collections);
     if (collectionMeta) {
       parts.push(collectionMeta);
@@ -140,11 +142,12 @@ export function generateTypes(
 function generateEntityInterface(
   collection: Collection,
   allCollections: Collection[],
+  filterTypes: Record<string, string> = {},
 ): string {
   const interfaceName = pascalCase(collection.name);
 
   const attributes = collection.attributes
-    .map((attr) => generateAttributeType(attr, allCollections))
+    .map((attr) => generateAttributeType(attr, allCollections, filterTypes))
     .join("\n");
 
   return `export interface ${interfaceName} extends IEntity {\n${attributes}\n}`;
@@ -153,25 +156,43 @@ function generateEntityInterface(
 function generateAttributeType(
   attr: Attribute,
   allCollections: Collection[],
+  filterTypes: Record<string, string> = {},
 ): string {
   let tsType: string;
 
-  // Handle relationship types
-  if (attr.type === AttributeEnum.Relationship) {
+  // 1. Explicit __type on the attribute takes highest priority
+  if (attr.__type) {
+    tsType = attr.__type;
+  }
+  // 2. First filter type if registered in config
+  else if (
+    attr.filters &&
+    attr.filters.length > 0 &&
+    filterTypes[attr.filters[0]!]
+  ) {
+    tsType = filterTypes[attr.filters[0]!]!;
+  }
+  // 3. Relationship types
+  else if (attr.type === AttributeEnum.Relationship) {
     tsType = generateRelationshipType(attr, allCollections);
   }
-  // Handle enum literal types
+  // 4. Enum literal types
   else if (attr.format === "enum" && attr.formatOptions?.["values"]) {
     tsType = generateEnumType(attr);
   }
-  // Handle other format options (like min/max for numbers, patterns for strings)
+  // 5. Default/basic types
   else {
     tsType = generateBasicType(attr);
   }
 
   // Handle array types
   if (attr.array) {
-    tsType += "[]";
+    if (!tsType.endsWith("[]") && !tsType.startsWith("Array<")) {
+      tsType =
+        tsType.includes("|") || tsType.includes("&")
+          ? `(${tsType})[]`
+          : `${tsType}[]`;
+    }
   }
 
   // Handle optional fields
@@ -204,15 +225,6 @@ function generateRelationshipType(
 
   if (relatedCollection) {
     const relatedInterfaceName = pascalCase(relatedCollection.name);
-
-    // Check if it's a two-way relationship or has specific relation type
-    if (opts?.twoWay) {
-      // For two-way relationships, we might want to reference the full entity or just the ID
-      return `${relatedInterfaceName}['$id'] | ${relatedInterfaceName}`;
-    }
-
-    // For regular relationships, allow both ID reference and full entity
-    // This provides flexibility for populated vs non-populated relationships
     return `${relatedInterfaceName}['$id'] | ${relatedInterfaceName}`;
   }
 
@@ -225,42 +237,10 @@ function generateEnumType(attr: Attribute): string {
 }
 
 function generateBasicType(attr: Attribute): string {
-  let baseType = typeMap[attr.type as AttributeEnum] ?? "any";
-
-  if (
-    (attr.type === AttributeEnum.Json || attr.type === AttributeEnum.Virtual) &&
-    attr.__type
-  ) {
-    baseType = attr.__type;
+  if (attr.__type) {
+    return attr.__type;
   }
-
-  // Add more specific types based on format options
-  if (attr.type === AttributeEnum.String && attr.formatOptions) {
-    if (attr.formatOptions["pattern"]) {
-      // Could add template literal types for patterns in the future
-      baseType = "string";
-    }
-    if (attr.formatOptions["minLength"] || attr.formatOptions["maxLength"]) {
-      // Could add branded types for length validation in the future
-      baseType = "string";
-    }
-  }
-
-  if (
-    (attr.type === AttributeEnum.Integer ||
-      attr.type === AttributeEnum.Float) &&
-    attr.formatOptions
-  ) {
-    if (
-      attr.formatOptions["min"] !== undefined ||
-      attr.formatOptions["max"] !== undefined
-    ) {
-      // Could add branded types for range validation in the future
-      baseType = "number";
-    }
-  }
-
-  return baseType;
+  return typeMap[attr.type as AttributeEnum] ?? "any";
 }
 
 function generateAttributeComment(attr: Attribute): string {
@@ -276,6 +256,14 @@ function generateAttributeComment(attr: Attribute): string {
     if (opts && opts.relatedCollection) {
       comments.push(`@relationship ${opts.relatedCollection}`);
     }
+  }
+
+  if (attr.filters && attr.filters.length > 0) {
+    comments.push(
+      attr.filters.length === 1
+        ? `@filter ${attr.filters[0]}`
+        : `@filters ${attr.filters.join(", ")}`,
+    );
   }
 
   if (attr.formatOptions) {
@@ -358,8 +346,13 @@ function pascalCase(str: string): string {
 export function generateEntityType(
   collection: Collection,
   allCollections: Collection[],
+  options: { filterTypes?: Record<string, string> } = {},
 ): string {
-  return generateEntityInterface(collection, allCollections);
+  return generateEntityInterface(
+    collection,
+    allCollections,
+    options.filterTypes,
+  );
 }
 
 // Utility function to generate Doc type for a specific collection
@@ -373,17 +366,17 @@ export function generateDocType(
 }
 
 function generateUtilityTypesInternal(collections: Collection[]): string {
+  if (collections.length === 0) return "";
+
   const utilityTypes = collections
     .map((col) => {
       const interfaceName = pascalCase(col.name);
       return `
 // Utility types for ${interfaceName}
-export type ${interfaceName}Create = Omit<${interfaceName}, '$id' | '$createdAt' | '$updatedAt' | '$sequence'>;
+export type ${interfaceName}Create = Omit<${interfaceName}, '$id' | '$createdAt' | '$updatedAt' | '$permissions' | '$sequence' | '$collection' | '$tenant' | '$schema'>;
 export type ${interfaceName}Update = Partial<${interfaceName}Create>;
 export type ${interfaceName}Keys = keyof ${interfaceName};
-export type ${interfaceName}Values = ${interfaceName}[${interfaceName}Keys];
-export type ${interfaceName}Pick<K extends keyof ${interfaceName}> = Pick<${interfaceName}, K>;
-export type ${interfaceName}Omit<K extends keyof ${interfaceName}> = Omit<${interfaceName}, K>;`;
+export type ${interfaceName}Values = ${interfaceName}[${interfaceName}Keys];`;
     })
     .join("\n");
 
@@ -391,6 +384,8 @@ export type ${interfaceName}Omit<K extends keyof ${interfaceName}> = Omit<${inte
 }
 
 function generateQueryTypesInternal(collections: Collection[]): string {
+  if (collections.length === 0) return "";
+
   const queryTypes = collections
     .map((col) => {
       const interfaceName = pascalCase(col.name);
@@ -412,14 +407,16 @@ export type ${interfaceName}Query = {
 }
 
 function generateInputTypesInternal(collections: Collection[]): string {
+  if (collections.length === 0) return "";
+
   const inputTypes = collections
     .map((col) => {
       const interfaceName = pascalCase(col.name);
       return `
 // Input types for ${interfaceName}
-export type ${interfaceName}Input = Omit<${interfaceName}, '$id' | '$createdAt' | '$updatedAt' | '$permissions' | '$sequence' | '$collection' | '$tenant'>;
-export type ${interfaceName}CreateInput = ${interfaceName}Input;
-export type ${interfaceName}UpdateInput = Partial<${interfaceName}Input>;`;
+export type ${interfaceName}Input = ${interfaceName}Create;
+export type ${interfaceName}CreateInput = ${interfaceName}Create;
+export type ${interfaceName}UpdateInput = ${interfaceName}Update;`;
     })
     .join("\n");
 
@@ -427,6 +424,8 @@ export type ${interfaceName}UpdateInput = Partial<${interfaceName}Input>;`;
 }
 
 function generateValidationTypesInternal(collections: Collection[]): string {
+  if (collections.length === 0) return "";
+
   const validationTypes = collections
     .map((col) => {
       const interfaceName = pascalCase(col.name);
@@ -455,6 +454,8 @@ export type ${interfaceName}ValidationResult = {
 }
 
 function generateCollectionMetadata(collections: Collection[]): string {
+  if (collections.length === 0) return "";
+
   const metadata = collections
     .map((col) => {
       const interfaceName = pascalCase(col.name);

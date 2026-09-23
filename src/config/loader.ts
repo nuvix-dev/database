@@ -73,9 +73,18 @@ export class ConfigLoader {
   ): NuvixDBConfig {
     const config: NuvixDBConfig = {
       collections: userConfig.collections || [],
+      filterTypes: {
+        ...DEFAULT_CONFIG.filterTypes,
+        ...userConfig.filterTypes,
+      },
       typeGeneration: {
         ...DEFAULT_CONFIG.typeGeneration,
         ...userConfig.typeGeneration,
+        filterTypes: {
+          ...DEFAULT_CONFIG.typeGeneration?.filterTypes,
+          ...userConfig.filterTypes,
+          ...userConfig.typeGeneration?.filterTypes,
+        },
       },
       database: {
         ...userConfig.database,
@@ -209,8 +218,8 @@ const config: NuvixDBConfig = {
     packageName: '@nuvix/db',
     includeDocTypes: true,
     generateUtilityTypes: true,
-    generateQueryTypes: true,
     generateInputTypes: true,
+    filterTypes: {},
   },
   
   options: {

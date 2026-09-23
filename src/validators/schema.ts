@@ -27,7 +27,7 @@ export type Attribute = {
   formatOptions?: Record<string, any>;
   default?: any;
   options?: AttributeOptions | Record<string, any>;
-  __type?: string; // internal use only
+  __type?: string; // custom TypeScript type override for type generation
 };
 
 export type Index = {

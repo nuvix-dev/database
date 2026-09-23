@@ -4,6 +4,9 @@ export interface NuvixDBConfig {
   /** Database collections */
   collections: Collection[];
 
+  /** Filter types mapping (filter name -> TypeScript type) */
+  filterTypes?: Record<string, string>;
+
   /** Type generation options */
   typeGeneration?: {
     /** Output path for generated types */
@@ -34,6 +37,9 @@ export interface NuvixDBConfig {
     generateValidationTypes?: boolean;
 
     includeMetaDataTypes?: boolean;
+
+    /** Filter types mapping (filter name -> TypeScript type) */
+    filterTypes?: Record<string, string>;
 
     /** Custom file header */
     fileHeader?: string;
@@ -98,11 +104,13 @@ export const DEFAULT_CONFIG: Partial<NuvixDBConfig> = {
     includeDocTypes: true,
     includeEntityMap: true,
     generateUtilityTypes: true,
-    generateQueryTypes: true,
+    generateQueryTypes: false,
     generateInputTypes: true,
     generateValidationTypes: false,
+    filterTypes: {},
     fileHeader: `// This file is auto-generated. Do not edit manually.\n// Generated on: ${new Date().toISOString()}\n`,
   },
+  filterTypes: {},
   options: {
     debug: false,
     strict: true,

@@ -170,7 +170,12 @@ CONFIGURATION:
   }
 
   private generateTypesFromConfig(config: NuvixDBConfig): string {
-    const { collections, typeGeneration } = config;
+    const { collections, typeGeneration, filterTypes: rootFilterTypes } = config;
+
+    const mergedFilterTypes = {
+      ...rootFilterTypes,
+      ...typeGeneration?.filterTypes,
+    };
 
     let generatedTypes = generateTypes(collections, {
       includeImports: typeGeneration?.includeImports,
@@ -182,6 +187,7 @@ CONFIGURATION:
       generateValidationTypes: typeGeneration?.generateValidationTypes,
       includeMetaDataTypes: typeGeneration?.includeMetaDataTypes,
       packageName: typeGeneration?.packageName,
+      filterTypes: mergedFilterTypes,
     });
 
     // Add file header
