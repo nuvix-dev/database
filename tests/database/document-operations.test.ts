@@ -229,7 +229,7 @@ describe("Document Operations", () => {
     });
 
     test("should preserve custom timestamps when preserveDates is enabled", async () => {
-      const customDate = new Date("2023-01-01T00:00:00.000Z").toISOString();
+      const customDate = new Date("2023-01-01T00:00:00.000Z");
       const documentData = {
         name: "Date Test",
         $createdAt: customDate,
@@ -309,7 +309,10 @@ describe("Document Operations", () => {
         new Doc(documentData),
       );
 
-      const retrieved = await system.getDocument(testCollectionId, created.getId());
+      const retrieved = await system.getDocument(
+        testCollectionId,
+        created.getId(),
+      );
 
       expect(retrieved.getId()).toBe(created.getId());
       expect(retrieved.get("name")).toBe("Get Test");
@@ -318,7 +321,10 @@ describe("Document Operations", () => {
 
     test("should return empty doc for non-existent document", async () => {
       const nonExistentId = ID.unique();
-      const document = await system.getDocument(testCollectionId, nonExistentId);
+      const document = await system.getDocument(
+        testCollectionId,
+        nonExistentId,
+      );
 
       expect(document.empty()).toBe(true);
     });
@@ -549,13 +555,19 @@ describe("Document Operations", () => {
       expect(deleted).toBe(true);
 
       // Verify deletion
-      const retrieved = await system.getDocument(testCollectionId, created.getId());
+      const retrieved = await system.getDocument(
+        testCollectionId,
+        created.getId(),
+      );
       expect(retrieved.empty()).toBe(true);
     });
 
     test("should return false for non-existent document", async () => {
       const nonExistentId = ID.unique();
-      const deleted = await system.deleteDocument(testCollectionId, nonExistentId);
+      const deleted = await system.deleteDocument(
+        testCollectionId,
+        nonExistentId,
+      );
 
       expect(deleted).toBe(false);
     });
@@ -573,7 +585,10 @@ describe("Document Operations", () => {
         { length: 5 },
         (_, i) => new Doc({ name: `Delete User ${i}` }),
       );
-      const created = await system.createDocuments(testCollectionId, documentsData);
+      const created = await system.createDocuments(
+        testCollectionId,
+        documentsData,
+      );
 
       // Delete all
       const deletedIds = await system.deleteDocuments(testCollectionId);

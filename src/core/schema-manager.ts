@@ -299,11 +299,11 @@ export class SchemaManager {
     collection.set("enabled", enabled);
 
     collection = await this.db.silent(() =>
-      this.db.system().updateDocument<Doc<Collection>>(
-        Base.METADATA,
-        collection.getId(),
-        collection,
-      ),
+      this.db
+        .system()
+        .updateDocument<
+          Doc<Collection>
+        >(Base.METADATA, collection.getId(), collection),
     );
     this.db.trigger(EventsEnum.CollectionUpdate, collection);
 
@@ -356,9 +356,9 @@ export class SchemaManager {
     const query = [Query.limit(limit), Query.offset(offset)];
 
     const metadataCollection: string = Base.METADATA;
-    return (await this.db.system().find(metadataCollection, query)) as Doc<
-      Collection
-    >[];
+    return (await this.db
+      .system()
+      .find(metadataCollection, query)) as Doc<Collection>[];
   }
 
   /**
@@ -513,11 +513,9 @@ export class SchemaManager {
       collection = await this.db.silent(() =>
         this.db
           .system()
-          .updateDocument<Doc<Collection>>(
-            Base.METADATA,
-            collection.getId(),
-            collection,
-          ),
+          .updateDocument<
+            Doc<Collection>
+          >(Base.METADATA, collection.getId(), collection),
       );
     }
 
@@ -528,10 +526,7 @@ export class SchemaManager {
   /**
    * Creates multiple attributes in a collection.
    */
-  public async createAttributes(
-    collectionId: string,
-    attributes: Attribute[],
-  ) {
+  public async createAttributes(collectionId: string, attributes: Attribute[]) {
     if (attributes.length === 0) {
       throw new DatabaseException("No attributes to create");
     }
@@ -542,7 +537,10 @@ export class SchemaManager {
     const attrDocs: Doc<Attribute>[] = [];
 
     for (const attribute of attributes) {
-      const attr = await this.internals.validateAttribute(collection, attribute);
+      const attr = await this.internals.validateAttribute(
+        collection,
+        attribute,
+      );
 
       collection.append("attributes", attr);
       attrDocs.push(attr);
@@ -565,11 +563,9 @@ export class SchemaManager {
       collection = await this.db.silent(() =>
         this.db
           .system()
-          .updateDocument<Doc<Collection>>(
-            Base.METADATA,
-            collection.getId(),
-            collection,
-          ),
+          .updateDocument<
+            Doc<Collection>
+          >(Base.METADATA, collection.getId(), collection),
       );
     }
 
@@ -716,10 +712,7 @@ export class SchemaManager {
         );
       }
 
-      this.internals.validateDefaultTypes(
-        attribute.get("type"),
-        defaultValue,
-      );
+      this.internals.validateDefaultTypes(attribute.get("type"), defaultValue);
 
       attribute.set("default", defaultValue);
     });
@@ -1135,10 +1128,7 @@ export class SchemaManager {
   /**
    * Delete an index in a collection.
    */
-  public async deleteIndex(
-    collectionId: string,
-    id: string,
-  ): Promise<boolean> {
+  public async deleteIndex(collectionId: string, id: string): Promise<boolean> {
     return deleteIndex(this.db, collectionId, id);
   }
 }

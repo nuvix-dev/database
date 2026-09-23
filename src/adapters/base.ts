@@ -7,7 +7,7 @@ import { Database, PopulateQuery, ProcessedQuery } from "@core/database.js";
 import { QueryBuilder } from "@utils/query-builder.js";
 import { Query } from "@core/query.js";
 import type { Entities } from "@nuvix/db";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../types.js";
 import { Logger } from "@utils/logger.js";
 import { AuthContext } from "@core/auth.js";
 import { Collection } from "@validators/schema.js";
@@ -56,7 +56,9 @@ export abstract class BaseAdapter extends EventEmitter {
   readonly $maxIndexLength: number = 8191;
   readonly $supportForJSONOverlaps: boolean = true;
 
-  protected transformations: Partial<Record<EventsEnum, Array<[string, (query: string) => string]>>> = {
+  protected transformations: Partial<
+    Record<EventsEnum, Array<[string, (query: string) => string]>>
+  > = {
     [EventsEnum.All]: [],
   };
 
@@ -214,7 +216,10 @@ export abstract class BaseAdapter extends EventEmitter {
       const { rows } = await this.client.query<any>(sql, params);
       return rows.length > 0;
     } catch (error) {
-      this.processException(error, `Failed to check if ${collection ? "table" : "schema"} exists`);
+      this.processException(
+        error,
+        `Failed to check if ${collection ? "table" : "schema"} exists`,
+      );
     }
   }
 
@@ -396,11 +401,17 @@ export abstract class BaseAdapter extends EventEmitter {
     const alias = Query.DEFAULT_ALIAS;
 
     const queryList = [
-      ...(Array.isArray(queries) ? queries : queries(new QueryBuilder()).build()),
+      ...(Array.isArray(queries)
+        ? queries
+        : queries(new QueryBuilder()).build()),
     ];
 
     const conditions = SqlBuilder.getSQLConditions(
-      this._meta, queryList, params, "AND", this.$supportForJSONOverlaps,
+      this._meta,
+      queryList,
+      params,
+      "AND",
+      this.$supportForJSONOverlaps,
     );
     if (conditions) {
       where.push(conditions);
@@ -445,7 +456,9 @@ export abstract class BaseAdapter extends EventEmitter {
       const { rows } = await this.client.query<any>(sql, params);
       const result = rows[0];
       // COUNT returns bigint, which drivers surface as a string — coerce.
-      return result?.sum !== undefined && result?.sum !== null ? Number(result.sum) : 0;
+      return result?.sum !== undefined && result?.sum !== null
+        ? Number(result.sum)
+        : 0;
     } catch (error) {
       throw this.processException(error, "Failed to count documents");
     }
@@ -468,11 +481,17 @@ export abstract class BaseAdapter extends EventEmitter {
     const alias = Query.DEFAULT_ALIAS;
 
     const queryList = [
-      ...(Array.isArray(queries) ? queries : queries(new QueryBuilder()).build()),
+      ...(Array.isArray(queries)
+        ? queries
+        : queries(new QueryBuilder()).build()),
     ];
 
     const conditions = SqlBuilder.getSQLConditions(
-      this._meta, queryList, params, "AND", this.$supportForJSONOverlaps,
+      this._meta,
+      queryList,
+      params,
+      "AND",
+      this.$supportForJSONOverlaps,
     );
     if (conditions) {
       where.push(conditions);
@@ -517,7 +536,9 @@ export abstract class BaseAdapter extends EventEmitter {
       const { rows } = await this.client.query<any>(sql, params);
       const result = rows[0];
       // SUM of numerics may surface as a string depending on driver parsing.
-      return result?.sum !== undefined && result?.sum !== null ? Number(result.sum) : 0;
+      return result?.sum !== undefined && result?.sum !== null
+        ? Number(result.sum)
+        : 0;
     } catch (error) {
       throw this.processException(error, "Failed to sum documents");
     }
@@ -647,10 +668,22 @@ export abstract class BaseAdapter extends EventEmitter {
     attributes: Record<string, any>,
     attribute: string = "",
   ): string {
-    return SqlBuilder.getUpsertStatement(this._meta, tableName, columns, batchKeys, attributes, attribute, this.$internalAttrs);
+    return SqlBuilder.getUpsertStatement(
+      this._meta,
+      tableName,
+      columns,
+      batchKeys,
+      attributes,
+      attribute,
+      this.$internalAttrs,
+    );
   }
 
-  protected getSQLType(type: AttributeEnum, size?: number, array?: boolean): string {
+  protected getSQLType(
+    type: AttributeEnum,
+    size?: number,
+    array?: boolean,
+  ): string {
     return SqlBuilder.getSQLType(type, size, array);
   }
 
@@ -700,7 +733,13 @@ export abstract class BaseAdapter extends EventEmitter {
     tenantCount: number = 0,
     condition: string = "AND",
   ): string {
-    return SqlBuilder.getTenantQuery(this._meta, collection, alias, tenantCount, condition);
+    return SqlBuilder.getTenantQuery(
+      this._meta,
+      collection,
+      alias,
+      tenantCount,
+      condition,
+    );
   }
 
   public quote(name: string): string {
@@ -840,7 +879,12 @@ export abstract class BaseAdapter extends EventEmitter {
 
   protected readonly $internalAttrs = INTERNAL_ATTR_KEYS;
 
-  public getJunctionTable(coll: number, relColl: number, attr: string, relAttr: string): string {
+  public getJunctionTable(
+    coll: number,
+    relColl: number,
+    attr: string,
+    relAttr: string,
+  ): string {
     return SqlBuilder.getJunctionTable(coll, relColl, attr, relAttr);
   }
 

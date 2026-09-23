@@ -1,4 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+} from "bun:test";
 import { createTestDb } from "./helpers.js";
 import { Database } from "../src/core/database.js";
 import { Doc } from "../src/core/doc.js";
@@ -930,7 +937,10 @@ describe("Database", () => {
       });
 
       it("retrieves document by ID", async () => {
-        const document = await session.getDocument(testCollectionId, testDocumentId);
+        const document = await session.getDocument(
+          testCollectionId,
+          testDocumentId,
+        );
 
         expect(document.getId()).toBe(testDocumentId);
         expect(document.get("name")).toContain("TestUser_");
@@ -1013,7 +1023,9 @@ describe("Database", () => {
       });
 
       it("finds documents with limit", async () => {
-        const documents = await session.find(testCollectionId, [Query.limit(10)]);
+        const documents = await session.find(testCollectionId, [
+          Query.limit(10),
+        ]);
         expect(documents.length).toBeLessThanOrEqual(10);
       });
 

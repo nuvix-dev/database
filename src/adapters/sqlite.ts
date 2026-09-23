@@ -2,10 +2,7 @@ import { Database } from "bun:sqlite";
 import { DatabaseException } from "@errors/base.js";
 import type { QueryClient, TransactionClient } from "./interface.js";
 import { processSQLiteException } from "./sqlite-error-mapper.js";
-import {
-  bindSQLiteValues,
-  type SQLiteBoundValue,
-} from "./sqlite-values.js";
+import { bindSQLiteValues, type SQLiteBoundValue } from "./sqlite-values.js";
 import type { DatabaseError, QueryResult } from "./types.js";
 
 export type { DatabaseError, QueryResult } from "./types.js";
@@ -193,7 +190,8 @@ export class SQLiteClient implements QueryClient {
   }
 
   private assertOpen(): void {
-    if (this.closed) throw new DatabaseException("SQLite client is disconnected");
+    if (this.closed)
+      throw new DatabaseException("SQLite client is disconnected");
   }
 
   private enqueue<T>(operation: () => T | Promise<T>): Promise<T> {

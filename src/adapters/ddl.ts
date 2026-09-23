@@ -23,10 +23,7 @@ import {
   RelationEnum,
   RelationSideEnum,
 } from "@core/enums.js";
-import type {
-  CreateCollectionOptions,
-  QueryClient,
-} from "./interface.js";
+import type { CreateCollectionOptions, QueryClient } from "./interface.js";
 import { DatabaseException } from "@errors/base.js";
 import { Database } from "@core/database.js";
 import { Doc } from "@core/doc.js";

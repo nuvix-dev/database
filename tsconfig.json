@@ -19,16 +19,15 @@
     // Project Layout
     "rootDir": ".",
     "outDir": "./dist",
-    "baseUrl": "./src",
     "paths": {
-      "@nuvix/db": ["index.ts"],
-      "@core/*": ["core/*"],
-      "@cache/*": ["cache/*"],
-      "@adapters/*": ["adapters/*"],
-      "@utils/*": ["utils/*"],
-      "@validators/*": ["validators/*"],
-      "@hooks/*": ["hooks/*"],
-      "@errors/*": ["errors/*"]
+      "@nuvix/db": ["./src/index.ts"],
+      "@core/*": ["./src/core/*"],
+      "@cache/*": ["./src/cache/*"],
+      "@adapters/*": ["./src/adapters/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@validators/*": ["./src/validators/*"],
+      "@hooks/*": ["./src/hooks/*"],
+      "@errors/*": ["./src/errors/*"]
     },
     // Module Output
     "esModuleInterop": true, // For CommonJS interop

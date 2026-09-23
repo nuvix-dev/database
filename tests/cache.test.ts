@@ -101,7 +101,11 @@ describe("Cache Functionality", () => {
 
       // Update document directly in database (bypassing cache)
       const updatedDoc = new Doc({ ...cachedDoc.toObject(), value: 200 });
-      await system.updateDocument(testCollectionId, cachedDoc.getId(), updatedDoc);
+      await system.updateDocument(
+        testCollectionId,
+        cachedDoc.getId(),
+        updatedDoc,
+      );
 
       // Read again - should still return cached version
       const secondRead = await system.getDocument(
@@ -130,7 +134,11 @@ describe("Cache Functionality", () => {
 
       // Update document
       const updatedDoc = new Doc({ ...cachedDoc.toObject(), value: 400 });
-      await system.updateDocument(testCollectionId, cachedDoc.getId(), updatedDoc);
+      await system.updateDocument(
+        testCollectionId,
+        cachedDoc.getId(),
+        updatedDoc,
+      );
 
       // Purge document from cache
       await system.purgeCachedDocument(testCollectionId, cachedDoc.getId());

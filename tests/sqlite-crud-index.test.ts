@@ -92,9 +92,9 @@ describe("SQLite schema, CRUD, bulk operations, and indexes", () => {
         "products",
         "removed",
       );
-      const afterDelete = await database.getAdapter().getSchemaAttributes(
-        "products",
-      );
+      const afterDelete = await database
+        .getAdapter()
+        .getSchemaAttributes("products");
 
       // Assert
       expect(await database.exists("main")).toBe(true);
@@ -112,16 +112,16 @@ describe("SQLite schema, CRUD, bulk operations, and indexes", () => {
         "temporary",
         "description",
       );
-      const afterRename = await database.getAdapter().getSchemaAttributes(
-        "products",
-      );
+      const afterRename = await database
+        .getAdapter()
+        .getSchemaAttributes("products");
       const deletedRenamedAttribute = await database.deleteAttribute(
         "products",
         "description",
       );
-      const afterRenamedDelete = await database.getAdapter().getSchemaAttributes(
-        "products",
-      );
+      const afterRenamedDelete = await database
+        .getAdapter()
+        .getSchemaAttributes("products");
       const deletedCollection = await database.deleteCollection("products");
 
       // Assert
@@ -171,18 +171,12 @@ describe("SQLite schema, CRUD, bulk operations, and indexes", () => {
         IndexEnum.Unique,
         ["email"],
       );
-      const physicalKey = await database
-        .getAdapter()
-        .$client.query<{ name: string }>(
-          "SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?",
-          [keyIndex],
-        );
-      const physicalUnique = await database
-        .getAdapter()
-        .$client.query<{ name: string }>(
-          "SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?",
-          [uniqueIndex],
-        );
+      const physicalKey = await database.getAdapter().$client.query<{
+        name: string;
+      }>("SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?", [keyIndex]);
+      const physicalUnique = await database.getAdapter().$client.query<{
+        name: string;
+      }>("SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?", [uniqueIndex]);
       await session.createDocument(
         "items",
         new Doc({
@@ -213,16 +207,10 @@ describe("SQLite schema, CRUD, bulk operations, and indexes", () => {
 
       // Act
       const keyDeleted = await database.deleteIndex("items", "status_key");
-      const uniqueDeleted = await database.deleteIndex(
-        "items",
-        "email_unique",
-      );
-      const removedIndexes = await database
-        .getAdapter()
-        .$client.query<{ name: string }>(
-          "SELECT name FROM sqlite_schema WHERE type = 'index' AND name IN (?, ?)",
-          [keyIndex, uniqueIndex],
-        );
+      const uniqueDeleted = await database.deleteIndex("items", "email_unique");
+      const removedIndexes = await database.getAdapter().$client.query<{
+        name: string;
+      }>("SELECT name FROM sqlite_schema WHERE type = 'index' AND name IN (?, ?)", [keyIndex, uniqueIndex]);
 
       // Assert
       expect(keyDeleted).toBe(true);
@@ -274,8 +262,8 @@ describe("SQLite schema, CRUD, bulk operations, and indexes", () => {
       expect(single.getSequence()).toBeGreaterThan(0);
       expect(single.createdAt()).not.toBeNull();
       expect(single.updatedAt()).not.toBeNull();
-      expect(single.createdAt()?.toISOString()).toBe(
-        single.updatedAt()?.toISOString(),
+      expect(single.createdAt().toISOString()).toBe(
+        single.updatedAt().toISOString(),
       );
       expect(bulk.map((document) => document.getId())).toEqual([
         "bulk-a",
@@ -426,16 +414,20 @@ describe("SQLite schema, CRUD, bulk operations, and indexes", () => {
         ],
         documentSecurity: false,
       });
-      const created = await original.system().createDocument(
-        "records",
-        new Doc({ $id: "persisted", value: "saved" }),
-      );
+      const created = await original
+        .system()
+        .createDocument(
+          "records",
+          new Doc({ $id: "persisted", value: "saved" }),
+        );
 
       // Act
       await original.getAdapter().$client.disconnect();
       reopened = fileDatabase(path);
       const collection = await reopened.getCollection("records");
-      const loaded = await reopened.system().getDocument("records", "persisted");
+      const loaded = await reopened
+        .system()
+        .getDocument("records", "persisted");
 
       // Assert
       expect(collection.empty()).toBe(false);

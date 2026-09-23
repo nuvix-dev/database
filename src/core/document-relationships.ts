@@ -189,16 +189,20 @@ export async function handleManyToMany(
 
   if (setIds !== undefined) {
     await db.silent(() =>
-      db.system().deleteDocuments(junctionCollection, [
-        Query.equal(relationship.getId(), [document.getId()]),
-      ]),
+      db
+        .system()
+        .deleteDocuments(junctionCollection, [
+          Query.equal(relationship.getId(), [document.getId()]),
+        ]),
     );
   } else if (disconnectIds.length > 0) {
     await db.silent(() =>
-      db.system().deleteDocuments(junctionCollection, [
-        Query.equal(relationship.getId(), [document.getId()]),
-        Query.equal(options.twoWayKey!, disconnectIds),
-      ]),
+      db
+        .system()
+        .deleteDocuments(junctionCollection, [
+          Query.equal(relationship.getId(), [document.getId()]),
+          Query.equal(options.twoWayKey!, disconnectIds),
+        ]),
     );
   }
 
@@ -207,9 +211,11 @@ export async function handleManyToMany(
 
   if (uniqueTargetIds.length > 0) {
     const relatedDocs = await db.silent(() =>
-      db.system().find(options.relatedCollection, (qb) =>
-        qb.equal("$id", ...uniqueTargetIds),
-      ),
+      db
+        .system()
+        .find(options.relatedCollection, (qb) =>
+          qb.equal("$id", ...uniqueTargetIds),
+        ),
     );
 
     const foundIdsSet = new Set(relatedDocs.map((d) => d.getId()));
@@ -302,11 +308,13 @@ export async function updateDocumentRelationships(
             // Clear previous relationship
             await db.silent(() =>
               db.skipCheckRelationshipsExist(() =>
-                db.system().updateDocuments(
-                  options.relatedCollection,
-                  new Doc({ [options.twoWayKey!]: null }),
-                  (qb) => qb.equal(options.twoWayKey!, document.getId()),
-                ),
+                db
+                  .system()
+                  .updateDocuments(
+                    options.relatedCollection,
+                    new Doc({ [options.twoWayKey!]: null }),
+                    (qb) => qb.equal(options.twoWayKey!, document.getId()),
+                  ),
               ),
             );
 
@@ -314,11 +322,13 @@ export async function updateDocumentRelationships(
             if (value !== null && typeof value === "string") {
               await db.silent(() =>
                 db.skipCheckRelationshipsExist(() =>
-                  db.system().updateDocument(
-                    options.relatedCollection,
-                    value,
-                    new Doc({ [options.twoWayKey!]: document.getId() }),
-                  ),
+                  db
+                    .system()
+                    .updateDocument(
+                      options.relatedCollection,
+                      value,
+                      new Doc({ [options.twoWayKey!]: document.getId() }),
+                    ),
                 ),
               );
             }
@@ -359,11 +369,13 @@ export async function updateDocumentRelationships(
             // Clear all current children
             await db.silent(() =>
               db.skipCheckRelationshipsExist(() =>
-                db.system().updateDocuments(
-                  options.relatedCollection,
-                  new Doc({ [options.twoWayKey!]: null }),
-                  (qb) => qb.equal(options.twoWayKey!, document.getId()),
-                ),
+                db
+                  .system()
+                  .updateDocuments(
+                    options.relatedCollection,
+                    new Doc({ [options.twoWayKey!]: null }),
+                    (qb) => qb.equal(options.twoWayKey!, document.getId()),
+                  ),
               ),
             );
 
@@ -371,11 +383,13 @@ export async function updateDocumentRelationships(
             if (setIds && setIds.length > 0) {
               await db.silent(() =>
                 db.skipCheckRelationshipsExist(() =>
-                  db.system().updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: document.getId() }),
-                    [Query.equal("$id", setIds)],
-                  ),
+                  db
+                    .system()
+                    .updateDocuments(
+                      options.relatedCollection,
+                      new Doc({ [options.twoWayKey!]: document.getId() }),
+                      [Query.equal("$id", setIds)],
+                    ),
                 ),
               );
             }
@@ -391,11 +405,13 @@ export async function updateDocumentRelationships(
             if (disconnectSet.size > 0) {
               await db.silent(() =>
                 db.skipCheckRelationshipsExist(() =>
-                  db.system().updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: null }),
-                    [Query.equal("$id", Array.from(disconnectSet))],
-                  ),
+                  db
+                    .system()
+                    .updateDocuments(
+                      options.relatedCollection,
+                      new Doc({ [options.twoWayKey!]: null }),
+                      [Query.equal("$id", Array.from(disconnectSet))],
+                    ),
                 ),
               );
             }
@@ -404,11 +420,13 @@ export async function updateDocumentRelationships(
             if (connectSet.size > 0) {
               await db.silent(() =>
                 db.skipCheckRelationshipsExist(() =>
-                  db.system().updateDocuments(
-                    options.relatedCollection,
-                    new Doc({ [options.twoWayKey!]: document.getId() }),
-                    [Query.equal("$id", Array.from(connectSet))],
-                  ),
+                  db
+                    .system()
+                    .updateDocuments(
+                      options.relatedCollection,
+                      new Doc({ [options.twoWayKey!]: document.getId() }),
+                      [Query.equal("$id", Array.from(connectSet))],
+                    ),
                 ),
               );
             }
@@ -526,33 +544,41 @@ export async function handleOnDelete(
     );
 
     if (onDelete === OnDelete.Restrict) {
-      const count = await db.system().count(
-        junctionCollection,
-        [Query.equal(parentAttr, [document.getId()])],
-        1,
-      );
+      const count = await db
+        .system()
+        .count(
+          junctionCollection,
+          [Query.equal(parentAttr, [document.getId()])],
+          1,
+        );
       if (count > 0) {
         throw new RelationshipException(
           `Cannot delete: related entries exist in "${relatedCollection.getId()}".`,
         );
       }
     } else if (onDelete === OnDelete.SetNull) {
-      await db.system().deleteDocuments(junctionCollection, [
-        Query.equal(parentAttr, [document.getId()]),
-      ]);
+      await db
+        .system()
+        .deleteDocuments(junctionCollection, [
+          Query.equal(parentAttr, [document.getId()]),
+        ]);
     } else if (onDelete === OnDelete.Cascade) {
       // Internal maintenance: cascading is deterministic schema behavior
       // authorized by the parent delete. Running on a system session keeps
       // cascades atomic instead of partially applied or blocked.
       const relatedIds = (
-        await db.system().find(junctionCollection, (qb) =>
-          qb.equal(parentAttr, document.getId()),
-        )
+        await db
+          .system()
+          .find(junctionCollection, (qb) =>
+            qb.equal(parentAttr, document.getId()),
+          )
       ).map((doc) => doc.get(childAttr));
 
-      await db.system().deleteDocuments(junctionCollection, [
-        Query.equal(parentAttr, [document.getId()]),
-      ]);
+      await db
+        .system()
+        .deleteDocuments(junctionCollection, [
+          Query.equal(parentAttr, [document.getId()]),
+        ]);
 
       relatedIds.length &&
         (await db
@@ -568,26 +594,30 @@ export async function handleOnDelete(
   if (!targetCollectionId || !targetField) return;
 
   if (onDelete === OnDelete.Restrict) {
-    const count = await db.system().count(
-      targetCollectionId,
-      [Query.equal(targetField, [document.getId()])],
-      1,
-    );
+    const count = await db
+      .system()
+      .count(
+        targetCollectionId,
+        [Query.equal(targetField, [document.getId()])],
+        1,
+      );
     if (count > 0) {
       throw new RelationshipException(
         `Cannot delete: related entries exist in "${targetCollectionId}".`,
       );
     }
   } else if (onDelete === OnDelete.SetNull) {
-    await db.system().updateDocuments(
-      targetCollectionId,
-      new Doc({ [targetField]: null }),
-      [Query.equal(targetField, [document.getId()])],
-    );
+    await db
+      .system()
+      .updateDocuments(targetCollectionId, new Doc({ [targetField]: null }), [
+        Query.equal(targetField, [document.getId()]),
+      ]);
   } else if (onDelete === OnDelete.Cascade) {
     // Internal maintenance: see Cascade comment above.
-    await db.system().deleteDocuments(targetCollectionId, (qb) =>
-      qb.equal(targetField, document.getId()),
-    );
+    await db
+      .system()
+      .deleteDocuments(targetCollectionId, (qb) =>
+        qb.equal(targetField, document.getId()),
+      );
   }
 }

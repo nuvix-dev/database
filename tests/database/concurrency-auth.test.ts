@@ -84,9 +84,7 @@ describe("Concurrent session authorization", () => {
 
     // Assert: each session sees exactly its own role's document —
     // neither sees the other's, and neither sees both.
-    expect(alphaDocs.map((d) => d.get("label")).sort()).toEqual([
-      "alpha-doc",
-    ]);
+    expect(alphaDocs.map((d) => d.get("label")).sort()).toEqual(["alpha-doc"]);
     expect(betaDocs.map((d) => d.get("label")).sort()).toEqual(["beta-doc"]);
   });
 

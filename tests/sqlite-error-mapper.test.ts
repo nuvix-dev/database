@@ -38,10 +38,9 @@ describe("processSQLiteException", () => {
     database.run("INSERT INTO users (email) VALUES (?)", ["user@example.com"]);
 
     try {
-      database.run(
-        "INSERT INTO users (email) VALUES (?)",
-        ["user@example.com"],
-      );
+      database.run("INSERT INTO users (email) VALUES (?)", [
+        "user@example.com",
+      ]);
       throw new Error("Expected SQLite to reject the duplicate value");
     } catch (error) {
       const mapped = capture(() => processSQLiteException(error));
@@ -65,9 +64,7 @@ describe("processSQLiteException", () => {
     const mapped = capture(() => processSQLiteException(source));
 
     expect(mapped).toBeInstanceOf(DuplicateException);
-    expect((mapped as DatabaseException).code).toBe(
-      "SQLITE_CONSTRAINT_UNIQUE",
-    );
+    expect((mapped as DatabaseException).code).toBe("SQLITE_CONSTRAINT_UNIQUE");
     expect(mapped.cause).toBe(source);
   });
 

@@ -5,7 +5,7 @@ import {
   generateEntityType,
 } from "../src/utils/generate-types.js";
 import { AttributeEnum } from "@core/enums.js";
-import { Database } from "index.js";
+import { Database } from "../dist/index.js";
 import { writeFile } from "fs/promises";
 
 describe("generateTypes", () => {

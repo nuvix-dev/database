@@ -13,9 +13,9 @@ const databases: Database[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    databases.splice(0).map((database) =>
-      database.getAdapter().$client.disconnect(),
-    ),
+    databases
+      .splice(0)
+      .map((database) => database.getAdapter().$client.disconnect()),
   );
 });
 
@@ -271,13 +271,12 @@ describe("SQLite shared-table tenant isolation", () => {
     // Act
     adapter.setMeta({ tenantId: 1 });
     const tenantOneBefore = await database.system().find("accounts");
-    const updated = await database.system().updateDocuments(
-      "accounts",
-      new Doc({ name: "tenant one bulk" }),
-    );
-    const upserted = await database.system().createOrUpdateDocuments(
-      "accounts",
-      [
+    const updated = await database
+      .system()
+      .updateDocuments("accounts", new Doc({ name: "tenant one bulk" }));
+    const upserted = await database
+      .system()
+      .createOrUpdateDocuments("accounts", [
         new Doc({
           $id: "same-id",
           email: "shared@example.test",
@@ -285,8 +284,7 @@ describe("SQLite shared-table tenant isolation", () => {
           score: 11,
           $permissions: permissions(1),
         }),
-      ],
-    );
+      ]);
     const crossTenantDelete = await database
       .system()
       .deleteDocument("accounts", "tenant-two-only");
@@ -323,32 +321,22 @@ describe("SQLite shared-table tenant isolation", () => {
     );
 
     // Assert
-    expect(tenantOneBefore.map((document) => document.get("name")).sort()).toEqual([
-      "tenant one only",
-      "tenant one shared",
-    ]);
+    expect(
+      tenantOneBefore.map((document) => document.get("name")).sort(),
+    ).toEqual(["tenant one only", "tenant one shared"]);
     expect(updated).toBe(2);
     expect(upserted).toBe(1);
     expect(crossTenantDelete).toBe(false);
     expect(deleted).toEqual(["tenant-one-only"]);
     expect(tenantOneCount).toBe(1);
     expect(tenantOneSum).toBe(11);
-    expect(tenantTwoAfter.map((document) => document.get("name")).sort()).toEqual([
-      "tenant two only",
-      "tenant two shared",
-    ]);
+    expect(
+      tenantTwoAfter.map((document) => document.get("name")).sort(),
+    ).toEqual(["tenant two only", "tenant two shared"]);
     expect(tenantTwoCount).toBe(2);
     expect(tenantTwoSum).toBe(300);
     expect(permissionRows.rows.map((row) => row._tenant)).toEqual([
-      1,
-      1,
-      1,
-      2,
-      2,
-      2,
-      2,
-      2,
-      2,
+      1, 1, 1, 2, 2, 2, 2, 2, 2,
     ]);
     expect(
       permissionRows.rows
@@ -382,10 +370,12 @@ describe("SQLite shared-table tenant isolation", () => {
       twoWay: true,
       twoWayKey: "author",
     });
-    await database.system().createDocument(
-      "authors",
-      new Doc({ $id: "same-author", name: "tenant one author" }),
-    );
+    await database
+      .system()
+      .createDocument(
+        "authors",
+        new Doc({ $id: "same-author", name: "tenant one author" }),
+      );
     await database.system().createDocument(
       "articles",
       new Doc({
@@ -395,10 +385,12 @@ describe("SQLite shared-table tenant isolation", () => {
       }),
     );
     adapter.setMeta({ tenantId: 2 });
-    await database.system().createDocument(
-      "authors",
-      new Doc({ $id: "same-author", name: "tenant two author" }),
-    );
+    await database
+      .system()
+      .createDocument(
+        "authors",
+        new Doc({ $id: "same-author", name: "tenant two author" }),
+      );
     await database.system().createDocument(
       "articles",
       new Doc({

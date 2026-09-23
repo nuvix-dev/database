@@ -15,7 +15,7 @@ import { Query, QueryType } from "@core/query.js";
 import { OrderException } from "@errors/index.js";
 import type { Collection, RelationOptions } from "@validators/schema.js";
 import type { QueryBuilder } from "@utils/query-builder.js";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../types.js";
 import type { Meta } from "./base.js";
 import { INTERNAL_ATTR_KEYS } from "./sql-builder.js";
 
@@ -110,11 +110,7 @@ export class SQLiteSqlBuilder {
     return `idx_${readable}_${SQLiteSqlBuilder.hash(identity, 20)}`;
   }
 
-  static getSQLIndex(
-    meta: Partial<Meta>,
-    table: string,
-    name: string,
-  ): string {
+  static getSQLIndex(meta: Partial<Meta>, table: string, name: string): string {
     return SQLiteSqlBuilder.quote(
       SQLiteSqlBuilder.getIndexName(meta, table, name),
     );
@@ -139,7 +135,9 @@ export class SQLiteSqlBuilder {
       case AttributeEnum.Uuid:
         return "TEXT";
       default:
-        throw new DatabaseException(`Unsupported SQLite attribute type: ${type}`);
+        throw new DatabaseException(
+          `Unsupported SQLite attribute type: ${type}`,
+        );
     }
   }
 
@@ -160,9 +158,7 @@ export class SQLiteSqlBuilder {
 
   static getForUpdateClause(forUpdate = false): string {
     if (forUpdate) {
-      throw new DatabaseException(
-        "SQLite does not support SELECT FOR UPDATE",
-      );
+      throw new DatabaseException("SQLite does not support SELECT FOR UPDATE");
     }
     return "";
   }
@@ -349,7 +345,10 @@ export class SQLiteSqlBuilder {
           [QueryType.GreaterThan]: ">",
           [QueryType.GreaterThanEqual]: ">=",
         };
-        fragment = { sql: `${column} ${operators[method]} ?`, params: [values[0]] };
+        fragment = {
+          sql: `${column} ${operators[method]} ?`,
+          params: [values[0]],
+        };
         break;
       }
       case QueryType.Contains:
@@ -463,9 +462,7 @@ export class SQLiteSqlBuilder {
     return conditions.length ? `(${conditions.join(` ${separator} `)})` : "";
   }
 
-  static getAttributeSelections(
-    queries: QueryBuilder | Query[],
-  ): string[] {
+  static getAttributeSelections(queries: QueryBuilder | Query[]): string[] {
     const queryList = Array.isArray(queries) ? queries : queries.build();
     return queryList
       .filter((query) => query.getMethod() === QueryType.Select)
@@ -539,9 +536,11 @@ export class SQLiteSqlBuilder {
     orders: Readonly<Record<string, OrderEnum>>,
   ): Array<[string, OrderEnum]> {
     const entries = Object.entries(orders) as Array<[string, OrderEnum]>;
-    if (!entries.some(([attribute]) =>
-      attribute === "$id" || attribute === "$sequence",
-    )) {
+    if (
+      !entries.some(
+        ([attribute]) => attribute === "$id" || attribute === "$sequence",
+      )
+    ) {
       entries.push(["$sequence", OrderEnum.Asc]);
     }
     return entries;
@@ -551,8 +550,9 @@ export class SQLiteSqlBuilder {
     orders: Readonly<Record<string, OrderEnum>>,
     tableAlias: string,
   ): string[] {
-    return SQLiteSqlBuilder.normalizeOrders(orders).map(([attribute, order]) =>
-      `${SQLiteSqlBuilder.column(attribute, tableAlias)} ${order}`,
+    return SQLiteSqlBuilder.normalizeOrders(orders).map(
+      ([attribute, order]) =>
+        `${SQLiteSqlBuilder.column(attribute, tableAlias)} ${order}`,
     );
   }
 
@@ -603,7 +603,10 @@ export class SQLiteSqlBuilder {
   ): string | null {
     const parentUid = SQLiteSqlBuilder.column("$id", parentAlias);
     const relationUid = SQLiteSqlBuilder.column("$id", relationAlias);
-    const parentRelation = SQLiteSqlBuilder.column(relationshipKey, parentAlias);
+    const parentRelation = SQLiteSqlBuilder.column(
+      relationshipKey,
+      parentAlias,
+    );
     const relatedRelation = SQLiteSqlBuilder.column(twoWayKey, relationAlias);
 
     switch (relationType) {
@@ -656,7 +659,13 @@ export class SQLiteSqlBuilder {
     },
     quoteValue: QuoteValue,
   ): BuildResult {
-    const { collection, filters = [], selections = [], orders, skipAuth } = query;
+    const {
+      collection,
+      filters = [],
+      selections = [],
+      orders,
+      skipAuth,
+    } = query;
     const where = SQLiteSqlBuilder.buildWhereConditions(
       meta,
       filters,
@@ -751,7 +760,10 @@ export class SQLiteSqlBuilder {
       const joinParts = [
         `LEFT JOIN ${SQLiteSqlBuilder.getSQLTable(meta, relatedName)} AS ${SQLiteSqlBuilder.quote(relationAlias)} ON ${joinCondition}`,
       ];
-      if (meta.sharedTables && options.relationType === RelationEnum.ManyToMany) {
+      if (
+        meta.sharedTables &&
+        options.relationType === RelationEnum.ManyToMany
+      ) {
         result.joinParams.push(meta.tenantId);
       }
       if (
@@ -913,9 +925,7 @@ export class SQLiteSqlBuilder {
     const table = SQLiteSqlBuilder.getSQLTable(meta, tableName);
     const sharedTables = !!meta.sharedTables;
     const update = (name: string, increment = false): string => {
-      const column = SQLiteSqlBuilder.quote(
-        SQLiteSqlBuilder.sanitize(name),
-      );
+      const column = SQLiteSqlBuilder.quote(SQLiteSqlBuilder.sanitize(name));
       const excluded = `${SQLiteSqlBuilder.quote("excluded")}.${column}`;
       const value = increment ? `${table}.${column} + ${excluded}` : excluded;
       if (!sharedTables) return `${column} = ${value}`;

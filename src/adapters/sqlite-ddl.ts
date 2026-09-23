@@ -105,28 +105,40 @@ export class SQLiteDdl {
     const prefix = `${SQLiteSqlBuilder.getTablePrefix(this.meta(name))}_`;
 
     try {
-      const { rows } = await this.ctx.$client.query<Pick<SQLiteSchemaRow, "name">>(
+      const { rows } = await this.ctx.$client.query<
+        Pick<SQLiteSchemaRow, "name">
+      >(
         "SELECT name FROM sqlite_schema WHERE type = 'table' AND substr(name, 1, ?) = ? ORDER BY name DESC",
         [prefix.length, prefix],
       );
       await this.ctx.$client.transaction(async (tx) => {
         for (const row of rows) {
-          await tx.query(`DROP TABLE IF EXISTS ${SQLiteSqlBuilder.quote(row.name)}`);
+          await tx.query(
+            `DROP TABLE IF EXISTS ${SQLiteSqlBuilder.quote(row.name)}`,
+          );
         }
       });
     } catch (error) {
-      processSQLiteException(error, `Failed to delete logical SQLite schema '${name}'`);
+      processSQLiteException(
+        error,
+        `Failed to delete logical SQLite schema '${name}'`,
+      );
     }
   }
 
   async exists(name: string, collection?: string): Promise<boolean> {
     if (!name?.trim()) {
-      throw new DatabaseException("Name parameter is required and cannot be empty");
+      throw new DatabaseException(
+        "Name parameter is required and cannot be empty",
+      );
     }
 
     try {
       if (collection) {
-        const table = SQLiteSqlBuilder.getTableName(this.meta(name), collection);
+        const table = SQLiteSqlBuilder.getTableName(
+          this.meta(name),
+          collection,
+        );
         const { rows } = await this.ctx.$client.query(
           "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1",
           [table],
@@ -141,7 +153,10 @@ export class SQLiteDdl {
       );
       return rows.length > 0;
     } catch (error) {
-      processSQLiteException(error, "Failed to inspect the logical SQLite schema");
+      processSQLiteException(
+        error,
+        "Failed to inspect the logical SQLite schema",
+      );
     }
   }
 
@@ -216,7 +231,10 @@ export class SQLiteDdl {
         for (const sql of internalIndexes) await tx.query(sql);
         for (const sql of indexSql) await tx.query(sql);
         await tx.query(permissionsSql);
-        for (const sql of this.permissionIndexes(permissionsName, permissionsTable)) {
+        for (const sql of this.permissionIndexes(
+          permissionsName,
+          permissionsTable,
+        )) {
           await tx.query(sql);
         }
       });
@@ -247,7 +265,10 @@ export class SQLiteDdl {
           ),
         );
         await tx.query(
-          this.ctx.trigger(EventsEnum.CollectionDelete, `DROP TABLE IF EXISTS ${table}`),
+          this.ctx.trigger(
+            EventsEnum.CollectionDelete,
+            `DROP TABLE IF EXISTS ${table}`,
+          ),
         );
       });
     } catch (error) {
@@ -293,7 +314,10 @@ export class SQLiteDdl {
         }
       });
     } catch (error) {
-      processSQLiteException(error, `Failed to create attributes in '${collection}'`);
+      processSQLiteException(
+        error,
+        `Failed to create attributes in '${collection}'`,
+      );
     }
   }
 
@@ -312,7 +336,11 @@ export class SQLiteDdl {
 
   async deleteAttribute(collection: string, name: string): Promise<void> {
     this.assertNames(collection, name);
-    await this.rebuild(collection, { drop: this.ctx.sanitize(name) }, EventsEnum.AttributeDelete);
+    await this.rebuild(
+      collection,
+      { drop: this.ctx.sanitize(name) },
+      EventsEnum.AttributeDelete,
+    );
   }
 
   async getSchemaAttributes(collection: string): Promise<Doc<ColumnInfo>[]> {
@@ -402,7 +430,8 @@ export class SQLiteDdl {
       twoWayKey,
       side,
     ).filter((change) => {
-      const replacement = change.key === this.ctx.sanitize(key) ? newKey : newTwoWayKey;
+      const replacement =
+        change.key === this.ctx.sanitize(key) ? newKey : newTwoWayKey;
       return replacement && change.key !== this.ctx.sanitize(replacement);
     });
     if (changes.length === 0) return true;
@@ -480,7 +509,10 @@ export class SQLiteDdl {
         );
       });
     } catch (error) {
-      processSQLiteException(error, `Failed to update attribute '${options.key}'`);
+      processSQLiteException(
+        error,
+        `Failed to update attribute '${options.key}'`,
+      );
     }
   }
 
@@ -490,13 +522,17 @@ export class SQLiteDdl {
     newName: string,
   ): Promise<boolean> {
     const oldIndex = this.indexName(collection, oldName);
-    const newIndex = this.ctx.getSQLIndex(collection, this.ctx.sanitize(newName));
+    const newIndex = this.ctx.getSQLIndex(
+      collection,
+      this.ctx.sanitize(newName),
+    );
 
     try {
-      const { rows } = await this.ctx.$client.query<Pick<SQLiteSchemaRow, "sql">>(
-        "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?",
-        [oldIndex],
-      );
+      const { rows } = await this.ctx.$client.query<
+        Pick<SQLiteSchemaRow, "sql">
+      >("SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?", [
+        oldIndex,
+      ]);
       const source = rows[0]?.sql;
       if (!source) return false;
       const renamed = source.replace(
@@ -505,7 +541,9 @@ export class SQLiteDdl {
           `CREATE ${unique ?? ""}INDEX ${newIndex}`,
       );
       if (renamed === source) {
-        throw new DatabaseException(`${UNSAFE_REBUILD}: index SQL cannot be reconstructed`);
+        throw new DatabaseException(
+          `${UNSAFE_REBUILD}: index SQL cannot be reconstructed`,
+        );
       }
       await this.ctx.$client.transaction(async (tx) => {
         await tx.query(`DROP INDEX ${SQLiteSqlBuilder.quote(oldIndex)}`);
@@ -513,7 +551,10 @@ export class SQLiteDdl {
       });
       return true;
     } catch (error) {
-      processSQLiteException(error, `Failed to rename SQLite index '${oldName}'`);
+      processSQLiteException(
+        error,
+        `Failed to rename SQLite index '${oldName}'`,
+      );
     }
   }
 
@@ -556,7 +597,10 @@ export class SQLiteDdl {
   }
 
   private tableName(collection: string): string {
-    return SQLiteSqlBuilder.getTableName(this.meta(), this.ctx.sanitize(collection));
+    return SQLiteSqlBuilder.getTableName(
+      this.meta(),
+      this.ctx.sanitize(collection),
+    );
   }
 
   private indexName(collection: string, index: string): string {
@@ -577,8 +621,11 @@ export class SQLiteDdl {
     const twoWay = options["twoWay"] === true;
     return !(
       relation === RelationEnum.ManyToMany ||
-      (relation === RelationEnum.OneToOne && !twoWay && side === RelationSideEnum.Child) ||
-      (relation === RelationEnum.OneToMany && side === RelationSideEnum.Parent) ||
+      (relation === RelationEnum.OneToOne &&
+        !twoWay &&
+        side === RelationSideEnum.Child) ||
+      (relation === RelationEnum.OneToMany &&
+        side === RelationSideEnum.Parent) ||
       (relation === RelationEnum.ManyToOne && side === RelationSideEnum.Child)
     );
   }
@@ -624,7 +671,8 @@ export class SQLiteDdl {
     }
     for (const attribute of attributes) {
       const metadata =
-        attributeTypes.get(attribute) ?? attributeTypes.get(attribute.toLowerCase());
+        attributeTypes.get(attribute) ??
+        attributeTypes.get(attribute.toLowerCase());
       if (!metadata) {
         throw new DatabaseException(
           `Attribute '${attribute}' not found in collection metadata.`,
@@ -646,7 +694,9 @@ export class SQLiteDdl {
     orders: (string | null)[],
   ): string {
     if (attributes.length === 0) {
-      throw new DatabaseException("SQLite indexes require at least one attribute");
+      throw new DatabaseException(
+        "SQLite indexes require at least one attribute",
+      );
     }
     const keys = attributes.map((attribute, index) => {
       const key = this.ctx.quote(
@@ -678,7 +728,9 @@ export class SQLiteDdl {
 
   private assertNames(...names: string[]): void {
     if (names.some((name) => !name)) {
-      throw new DatabaseException("SQLite schema operation requires non-empty names");
+      throw new DatabaseException(
+        "SQLite schema operation requires non-empty names",
+      );
     }
     names.forEach((name) => this.ctx.sanitize(name));
   }
@@ -724,7 +776,8 @@ export class SQLiteDdl {
     const second = { collection: related, key: this.ctx.sanitize(twoWayKey) };
     switch (type) {
       case RelationEnum.OneToOne:
-        if (side === RelationSideEnum.Parent) return twoWay ? [first, second] : [first];
+        if (side === RelationSideEnum.Parent)
+          return twoWay ? [first, second] : [first];
         return twoWay ? [second, first] : [second];
       case RelationEnum.OneToMany:
         return side === RelationSideEnum.Parent ? [second] : [first];
@@ -762,10 +815,18 @@ export class SQLiteDdl {
   private normalizedType(type: string): string {
     const upper = type.toUpperCase();
     if (upper.includes("INT")) return "integer";
-    if (upper.includes("REAL") || upper.includes("FLOA") || upper.includes("DOUB")) {
+    if (
+      upper.includes("REAL") ||
+      upper.includes("FLOA") ||
+      upper.includes("DOUB")
+    ) {
       return "double precision";
     }
-    if (upper.includes("TEXT") || upper.includes("CHAR") || upper.includes("CLOB")) {
+    if (
+      upper.includes("TEXT") ||
+      upper.includes("CHAR") ||
+      upper.includes("CLOB")
+    ) {
       return "text";
     }
     if (upper.includes("BLOB") || upper === "") return "blob";
@@ -782,7 +843,10 @@ export class SQLiteDdl {
         this.rebuildWithClient(tx, collection, change, event),
       );
     } catch (error) {
-      processSQLiteException(error, `Failed to rebuild SQLite table '${collection}'`);
+      processSQLiteException(
+        error,
+        `Failed to rebuild SQLite table '${collection}'`,
+      );
     }
   }
 
@@ -801,7 +865,8 @@ export class SQLiteDdl {
       [tableName, tableName, tableName],
     );
     const tableSql = schemaRows.find((row) => row.type === "table")?.sql;
-    if (!tableSql) throw new DatabaseException(`SQLite table '${collection}' not found`);
+    if (!tableSql)
+      throw new DatabaseException(`SQLite table '${collection}' not found`);
     this.assertRebuildSchema(schemaRows, tableSql);
 
     const { rows: columns } = await client.query<SQLiteColumnRow>(
@@ -809,7 +874,9 @@ export class SQLiteDdl {
       [tableName],
     );
     if (columns.some((column) => (column.hidden ?? 0) !== 0)) {
-      throw new DatabaseException(`${UNSAFE_REBUILD}: generated or hidden columns`);
+      throw new DatabaseException(
+        `${UNSAFE_REBUILD}: generated or hidden columns`,
+      );
     }
     const kept = columns.filter((column) => column.name !== change.drop);
     if (kept.length === columns.length && change.drop) {
@@ -820,7 +887,9 @@ export class SQLiteDdl {
       [tableName],
     );
     if (foreignKeys.some((foreignKey) => foreignKey.table === tableName)) {
-      throw new DatabaseException(`${UNSAFE_REBUILD}: self-referencing foreign key`);
+      throw new DatabaseException(
+        `${UNSAFE_REBUILD}: self-referencing foreign key`,
+      );
     }
     await this.assertInboundForeignKeys(client, tableName);
 
@@ -829,7 +898,9 @@ export class SQLiteDdl {
       [tableName],
     );
     if (indexes.some((index) => index.origin === "u")) {
-      throw new DatabaseException(`${UNSAFE_REBUILD}: table-level UNIQUE constraint`);
+      throw new DatabaseException(
+        `${UNSAFE_REBUILD}: table-level UNIQUE constraint`,
+      );
     }
     const recreate = await this.rebuildIndexes(client, indexes, change.drop);
     const definitions = this.columnDefinitions(kept, change, tableSql);
@@ -838,7 +909,9 @@ export class SQLiteDdl {
       event,
       `CREATE TABLE ${temporary} (${definitions.concat(constraints).join(", ")})`,
     );
-    const destinations = kept.map((column) => SQLiteSqlBuilder.quote(column.name));
+    const destinations = kept.map((column) =>
+      SQLiteSqlBuilder.quote(column.name),
+    );
     const selections = kept.map((column) => {
       const quoted = SQLiteSqlBuilder.quote(column.name);
       return column.name === change.column && change.type
@@ -857,10 +930,14 @@ export class SQLiteDdl {
 
   private assertRebuildSchema(rows: SQLiteSchemaRow[], tableSql: string): void {
     if (rows.some((row) => row.type === "trigger" || row.type === "view")) {
-      throw new DatabaseException(`${UNSAFE_REBUILD}: dependent trigger or view`);
+      throw new DatabaseException(
+        `${UNSAFE_REBUILD}: dependent trigger or view`,
+      );
     }
     if (/\b(?:CHECK|GENERATED|WITHOUT\s+ROWID|STRICT)\b/i.test(tableSql)) {
-      throw new DatabaseException(`${UNSAFE_REBUILD}: unsupported table definition`);
+      throw new DatabaseException(
+        `${UNSAFE_REBUILD}: unsupported table definition`,
+      );
     }
   }
 
@@ -897,9 +974,10 @@ export class SQLiteDdl {
     const primary = columns.filter((column) => column.pk > 0);
     const autoincrement = /\bAUTOINCREMENT\b/i.test(sourceSql);
     const definitions = columns.map((column) => {
-      const type = column.name === change.column && change.type
-        ? change.type
-        : column.type;
+      const type =
+        column.name === change.column && change.type
+          ? change.type
+          : column.type;
       const parts = [SQLiteSqlBuilder.quote(column.name), type || "BLOB"];
       if (primary.length === 1 && column.pk > 0) parts.push("PRIMARY KEY");
       if (primary.length === 1 && column.pk > 0 && autoincrement) {
@@ -911,7 +989,8 @@ export class SQLiteDdl {
         parts.push("AUTOINCREMENT");
       }
       if (column.notnull === 1 && column.pk === 0) parts.push("NOT NULL");
-      if (column.dflt_value !== null) parts.push(`DEFAULT ${column.dflt_value}`);
+      if (column.dflt_value !== null)
+        parts.push(`DEFAULT ${column.dflt_value}`);
       return parts.join(" ");
     });
     if (primary.length > 1) {
@@ -943,7 +1022,9 @@ export class SQLiteDdl {
       const from = ordered.map((row) => SQLiteSqlBuilder.quote(row.from));
       const to = ordered.map((row) => {
         if (!row.to) {
-          throw new DatabaseException(`${UNSAFE_REBUILD}: implicit foreign-key target`);
+          throw new DatabaseException(
+            `${UNSAFE_REBUILD}: implicit foreign-key target`,
+          );
         }
         return SQLiteSqlBuilder.quote(row.to);
       });
@@ -965,7 +1046,8 @@ export class SQLiteDdl {
         [index.name],
       );
       const keyColumns = columns.filter((column) => column.key !== 0);
-      if (dropped && keyColumns.some((column) => column.name === dropped)) continue;
+      if (dropped && keyColumns.some((column) => column.name === dropped))
+        continue;
       if (keyColumns.some((column) => column.name === null)) {
         throw new DatabaseException(`${UNSAFE_REBUILD}: expression index`);
       }
@@ -991,7 +1073,10 @@ export class SQLiteDdl {
       );
       return Number(rows[0]?.size ?? 0);
     } catch (error) {
-      processSQLiteException(error, `Failed to get size of collection '${collection}'`);
+      processSQLiteException(
+        error,
+        `Failed to get size of collection '${collection}'`,
+      );
     }
   }
 

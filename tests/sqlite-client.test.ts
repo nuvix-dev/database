@@ -3,10 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import {
-  escapeSQLiteLiteral,
-  SQLiteClient,
-} from "@adapters/sqlite.js";
+import { escapeSQLiteLiteral, SQLiteClient } from "@adapters/sqlite.js";
 import { DuplicateException } from "@errors/index.js";
 
 describe("SQLiteClient", () => {
@@ -35,7 +32,9 @@ describe("SQLiteClient", () => {
       const reopened = new Database(path);
       try {
         expect(
-          reopened.query<{ value: string }, []>("SELECT value FROM records").get(),
+          reopened
+            .query<{ value: string }, []>("SELECT value FROM records")
+            .get(),
         ).toEqual({ value: "saved" });
       } finally {
         reopened.close(true);
@@ -66,7 +65,9 @@ describe("SQLiteClient", () => {
     const client = new SQLiteClient(":memory:");
 
     try {
-      await client.query("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)");
+      await client.query(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)",
+      );
       const inserted = await client.query<{ id: number; name: string }>(
         "INSERT INTO items (name) VALUES (?) RETURNING id, name",
         ["bound"],
@@ -90,10 +91,17 @@ describe("SQLiteClient", () => {
     const client = new SQLiteClient(":memory:");
 
     try {
-      await client.query("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)");
-      await client.query("INSERT INTO items (name) VALUES (?), (?)", ["a", "b"]);
+      await client.query(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)",
+      );
+      await client.query("INSERT INTO items (name) VALUES (?), (?)", [
+        "a",
+        "b",
+      ]);
 
-      const updated = await client.query("UPDATE items SET name = ?", ["updated"]);
+      const updated = await client.query("UPDATE items SET name = ?", [
+        "updated",
+      ]);
       const deleted = await client.query("DELETE FROM items WHERE id = ?", [1]);
 
       expect(updated).toEqual({ rows: [], rowCount: 2 });
@@ -108,7 +116,9 @@ describe("SQLiteClient", () => {
 
     try {
       await client.query("CREATE TABLE users (email TEXT UNIQUE)");
-      await client.query("INSERT INTO users (email) VALUES (?)", ["a@example.com"]);
+      await client.query("INSERT INTO users (email) VALUES (?)", [
+        "a@example.com",
+      ]);
 
       await expect(
         client.query("INSERT INTO users (email) VALUES (?)", ["a@example.com"]),
@@ -211,6 +221,8 @@ describe("SQLiteClient", () => {
 
     await client.disconnect();
     await expect(client.disconnect()).resolves.toBeUndefined();
-    await expect(client.ping()).rejects.toThrow("SQLite client is disconnected");
+    await expect(client.ping()).rejects.toThrow(
+      "SQLite client is disconnected",
+    );
   });
 });

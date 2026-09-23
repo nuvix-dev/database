@@ -77,18 +77,21 @@ describe("Relationship authorization integrity", () => {
       onDelete: OnDelete.Cascade,
     });
 
-    const author = await db.system().createDocument(
-      authorsId,
-      new Doc({ name: "Alice" }),
-    );
-    const post1 = await db.system().createDocument(
-      postsId,
-      new Doc({ title: "P1", author: author.getId() }),
-    );
-    const post2 = await db.system().createDocument(
-      postsId,
-      new Doc({ title: "P2", author: author.getId() }),
-    );
+    const author = await db
+      .system()
+      .createDocument(authorsId, new Doc({ name: "Alice" }));
+    const post1 = await db
+      .system()
+      .createDocument(
+        postsId,
+        new Doc({ title: "P1", author: author.getId() }),
+      );
+    const post2 = await db
+      .system()
+      .createDocument(
+        postsId,
+        new Doc({ title: "P2", author: author.getId() }),
+      );
 
     // Act as restricted caller.
     await db.for("user:alice").deleteDocument(authorsId, author.getId());
@@ -150,12 +153,12 @@ describe("Relationship authorization integrity", () => {
 
     await db.for("user:alice").deleteDocument(postsId, post.getId());
 
-    expect(
-      (await db.system().getDocument(tagsId, tag1.getId())).empty(),
-    ).toBe(true);
-    expect(
-      (await db.system().getDocument(tagsId, tag2.getId())).empty(),
-    ).toBe(true);
+    expect((await db.system().getDocument(tagsId, tag1.getId())).empty()).toBe(
+      true,
+    );
+    expect((await db.system().getDocument(tagsId, tag2.getId())).empty()).toBe(
+      true,
+    );
   });
 
   test("OneToOne re-link clears old partner FK despite no update rights on partner collection", async () => {
@@ -198,15 +201,13 @@ describe("Relationship authorization integrity", () => {
       .createDocument(seatsId, new Doc({ label: "S1", member: m1.getId() }));
     // S2 is readable by alice (existence check enforces read),
     // but the seats COLLECTION grants her nothing else.
-    const s2 = await db
-      .system()
-      .createDocument(
-        seatsId,
-        new Doc({
-          label: "S2",
-          $permissions: [Permission.read(Role.user("alice"))],
-        }),
-      );
+    const s2 = await db.system().createDocument(
+      seatsId,
+      new Doc({
+        label: "S2",
+        $permissions: [Permission.read(Role.user("alice"))],
+      }),
+    );
 
     await db.for("user:alice").updateDocument(
       membersId,
@@ -299,9 +300,7 @@ describe("Relationship authorization integrity", () => {
       ],
     });
 
-    const doc = await db
-      .system()
-      .createDocument(countersId, new Doc({ n: 5 }));
+    const doc = await db.system().createDocument(countersId, new Doc({ n: 5 }));
     const adapter = db.getAdapter();
     const bump = (value: number, min?: number, max?: number) =>
       adapter.increaseDocumentAttribute({
@@ -317,9 +316,9 @@ describe("Relationship authorization integrity", () => {
     // Direct adapter calls bypass DB-level cache invalidation.
     const readN = async () => {
       await db.system().purgeCachedDocument(countersId, doc.getId());
-      const raw = (
-        await db.system().getDocument(countersId, doc.getId())
-      ).get("n");
+      const raw = (await db.system().getDocument(countersId, doc.getId())).get(
+        "n",
+      );
       return Number(raw);
     };
 

@@ -6,8 +6,8 @@ const typeMap: Record<AttributeEnum, string> = {
   [AttributeEnum.Integer]: "number",
   [AttributeEnum.Float]: "number",
   [AttributeEnum.Boolean]: "boolean",
-  [AttributeEnum.Timestamptz]: "string | Date",
-  [AttributeEnum.Json]: "Record<string, any>",
+  [AttributeEnum.Timestamptz]: "Date",
+  [AttributeEnum.Json]: "Record<string, unknown>",
   [AttributeEnum.Relationship]: "string", // will be replaced dynamically
   [AttributeEnum.Virtual]: "never",
   [AttributeEnum.Uuid]: "string",
@@ -31,13 +31,13 @@ interface TypeGenerationOptions {
  */
 const IENTITY_DEFINITION = `export interface IEntity {
   $id: string;
-  $createdAt: Date | string | null;
-  $updatedAt: Date | string | null;
+  $createdAt: Date;
+  $updatedAt: Date;
   $permissions: string[];
   $sequence: number;
   $collection: string;
-  $tenant?: number | null;
-  $schema?: string;
+  $tenant?: number | null; // Optional tenant ID for multi-tenant support
+  $schema?: string; // Optional schema where the entity is stored
 }`;
 
 export function generateTypes(

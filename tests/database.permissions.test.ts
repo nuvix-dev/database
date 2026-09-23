@@ -87,10 +87,9 @@ describe("Database Permissions", () => {
         email: "collection@test.com",
       };
 
-      const document = await db.system().createDocument(
-        collectionLevelCollectionId,
-        new Doc(documentData),
-      );
+      const document = await db
+        .system()
+        .createDocument(collectionLevelCollectionId, new Doc(documentData));
       testDocumentId = document.getId();
     });
 
@@ -116,10 +115,9 @@ describe("Database Permissions", () => {
     });
 
     test("should bypass authorization checks when using system session", async () => {
-      const document = await db.system().getDocument(
-        collectionLevelCollectionId,
-        testDocumentId,
-      );
+      const document = await db
+        .system()
+        .getDocument(collectionLevelCollectionId, testDocumentId);
 
       expect(document.empty()).toBe(false);
       expect(document.getId()).toBe(testDocumentId);
@@ -141,10 +139,12 @@ describe("Database Permissions", () => {
         ],
       };
 
-      const allowedDocument = await db.for("any").createDocument(
-        documentLevelCollectionId,
-        new Doc(allowedDocumentData),
-      );
+      const allowedDocument = await db
+        .for("any")
+        .createDocument(
+          documentLevelCollectionId,
+          new Doc(allowedDocumentData),
+        );
       allowedDocumentId = allowedDocument.getId();
 
       // Create document without read permission for the user
@@ -157,10 +157,9 @@ describe("Database Permissions", () => {
         ],
       };
 
-      const deniedDocument = await db.for("any").createDocument(
-        documentLevelCollectionId,
-        new Doc(deniedDocumentData),
-      );
+      const deniedDocument = await db
+        .for("any")
+        .createDocument(documentLevelCollectionId, new Doc(deniedDocumentData));
       deniedDocumentId = deniedDocument.getId();
     });
 
@@ -262,10 +261,9 @@ describe("Database Permissions", () => {
         $permissions: [Permission.read(Role.user("document_reader"))],
       };
 
-      const document = await db.for("any").createDocument(
-        comboCollectionId,
-        new Doc(documentData),
-      );
+      const document = await db
+        .for("any")
+        .createDocument(comboCollectionId, new Doc(documentData));
       testDocumentId = document.getId();
     });
 
@@ -320,10 +318,12 @@ describe("Database Permissions", () => {
       });
 
       // Create test document
-      const document = await db.for("any").createDocument(
-        multiRoleCollectionId,
-        new Doc({ name: "Multi Role Test" }),
-      );
+      const document = await db
+        .for("any")
+        .createDocument(
+          multiRoleCollectionId,
+          new Doc({ name: "Multi Role Test" }),
+        );
 
       // Test admin access
       let retrieved = await db
@@ -367,16 +367,17 @@ describe("Database Permissions", () => {
       });
 
       // Create test document
-      const document = await db.for("any").createDocument(
-        anyRoleCollectionId,
-        new Doc({ name: "Any Role Test" }),
-      );
+      const document = await db
+        .for("any")
+        .createDocument(
+          anyRoleCollectionId,
+          new Doc({ name: "Any Role Test" }),
+        );
 
       // Test with any user role
-      const retrieved = await db.for("any").getDocument(
-        anyRoleCollectionId,
-        document.getId(),
-      );
+      const retrieved = await db
+        .for("any")
+        .getDocument(anyRoleCollectionId, document.getId());
       expect(retrieved.empty()).toBe(false);
       expect(retrieved.get("name")).toBe("Any Role Test");
     });

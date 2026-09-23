@@ -1,4 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+} from "bun:test";
 import { createTestDb } from "./helpers.js";
 import { Database } from "../src/core/database.js";
 import { Doc } from "../src/core/doc.js";
@@ -136,7 +143,10 @@ describe("Database Upsert Operations", () => {
           }),
         ];
 
-        await system.createOrUpdateDocuments(testCollectionId, initialDocuments);
+        await system.createOrUpdateDocuments(
+          testCollectionId,
+          initialDocuments,
+        );
 
         // Then update them
         const updateDocuments = [
@@ -193,7 +203,10 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(2);
 
-        const existingDoc = await system.getDocument(testCollectionId, "existing");
+        const existingDoc = await system.getDocument(
+          testCollectionId,
+          "existing",
+        );
         const newDoc = await system.getDocument(testCollectionId, "new");
 
         expect(existingDoc.get("name")).toBe("Updated Existing");
@@ -228,7 +241,10 @@ describe("Database Upsert Operations", () => {
       });
 
       it("returns 0 for empty document array", async () => {
-        const result = await system.createOrUpdateDocuments(testCollectionId, []);
+        const result = await system.createOrUpdateDocuments(
+          testCollectionId,
+          [],
+        );
         expect(result).toBe(0);
       });
 
@@ -262,8 +278,14 @@ describe("Database Upsert Operations", () => {
         expect(result).toBe(25);
 
         // Verify all documents were created
-        const firstDoc = await system.getDocument(testCollectionId, "batch_user_0");
-        const lastDoc = await system.getDocument(testCollectionId, "batch_user_24");
+        const firstDoc = await system.getDocument(
+          testCollectionId,
+          "batch_user_0",
+        );
+        const lastDoc = await system.getDocument(
+          testCollectionId,
+          "batch_user_24",
+        );
 
         expect(firstDoc.get("name")).toBe("Batch User 0");
         expect(lastDoc.get("name")).toBe("Batch User 24");
@@ -496,7 +518,10 @@ describe("Database Upsert Operations", () => {
 
         await system.createOrUpdateDocuments(testCollectionId, documents);
 
-        const doc = await system.getDocument(testCollectionId, "timestamp_test");
+        const doc = await system.getDocument(
+          testCollectionId,
+          "timestamp_test",
+        );
 
         expect(doc.get("$createdAt")).toBeTruthy();
         expect(doc.get("$updatedAt")).toBeTruthy();
@@ -647,7 +672,10 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await system.getDocument(testCollectionId, "float_increase");
+        const doc = await system.getDocument(
+          testCollectionId,
+          "float_increase",
+        );
         expect(doc.get("balance")).toBeCloseTo(35.75); // 25.5 + 10.25
       });
 
@@ -668,7 +696,10 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await system.getDocument(testCollectionId, "new_with_increase");
+        const doc = await system.getDocument(
+          testCollectionId,
+          "new_with_increase",
+        );
         expect(doc.get("score")).toBe(75); // New document, no existing value to increase
       });
 
@@ -753,7 +784,10 @@ describe("Database Upsert Operations", () => {
 
         expect(result).toBe(1);
 
-        const doc = await system.getDocument(testCollectionId, "regular_upsert");
+        const doc = await system.getDocument(
+          testCollectionId,
+          "regular_upsert",
+        );
         expect(doc.get("score")).toBe(100);
       });
 
@@ -826,8 +860,14 @@ describe("Database Upsert Operations", () => {
         expect(result).toBe(10);
 
         // Verify increases were applied
-        const doc0 = await system.getDocument(testCollectionId, "batch_increase_0");
-        const doc5 = await system.getDocument(testCollectionId, "batch_increase_5");
+        const doc0 = await system.getDocument(
+          testCollectionId,
+          "batch_increase_0",
+        );
+        const doc5 = await system.getDocument(
+          testCollectionId,
+          "batch_increase_5",
+        );
 
         expect(doc0.get("score")).toBe(5); // 0 + 5
         expect(doc5.get("score")).toBe(55); // 50 + 5

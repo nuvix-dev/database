@@ -9,7 +9,7 @@ import {
   type CursorEnum,
   type OrderEnum,
 } from "./enums.js";
-import { IEntity } from "types.js";
+import { IEntity } from "../types.js";
 
 export type FilterValue =
   | string

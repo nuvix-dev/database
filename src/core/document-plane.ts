@@ -17,7 +17,7 @@ import type { AuthContext } from "./auth.js";
 import type { QueryBuilder } from "@utils/query-builder.js";
 import type { Query } from "./query.js";
 import type { Doc } from "./doc.js";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../types.js";
 import type { Collection } from "@validators/schema.js";
 import type { PermissionEnum } from "./enums.js";
 import type { Session } from "./session.js";
@@ -153,7 +153,10 @@ export interface DocumentPlane {
       throwOnUnAuthorization?: boolean;
     },
   ): Promise<ProcessedQuery>;
-  purgeCachedDocument(collectionId: string, doc: Doc<any> | string): Promise<void>;
+  purgeCachedDocument(
+    collectionId: string,
+    doc: Doc<any> | string,
+  ): Promise<void>;
   purgeCachedCollection(collection: Doc<Collection> | string): Promise<void>;
   withTransaction<T>(
     ctx: AuthContext,

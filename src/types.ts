@@ -19,8 +19,8 @@ export interface Entities {
 
 export interface IEntity {
   $id: string;
-  $createdAt: Date | string | null;
-  $updatedAt: Date | string | null;
+  $createdAt: Date;
+  $updatedAt: Date;
   $permissions: string[];
   $sequence: number;
   $collection: string;
@@ -30,8 +30,8 @@ export interface IEntity {
 
 export type IEntityInput = {
   $id?: string;
-  $createdAt?: Date | string | null;
-  $updatedAt?: Date | string | null;
+  $createdAt?: Date | null;
+  $updatedAt?: Date | null;
   $permissions?: (Permission | string)[];
   $sequence?: number;
   $collection?: string;

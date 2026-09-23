@@ -50,10 +50,18 @@ export class Adapter extends BaseAdapter implements DatabaseAdapter {
     // transaction-scoped adapters (copied metadata) must stay observable.
     const host = this;
     this.ddl = new Ddl({
-      get $schema() { return host.$schema; },
-      get $sharedTables() { return host.$sharedTables; },
-      get $namespace() { return host.$namespace; },
-      get $client() { return host.$client; },
+      get $schema() {
+        return host.$schema;
+      },
+      get $sharedTables() {
+        return host.$sharedTables;
+      },
+      get $namespace() {
+        return host.$namespace;
+      },
+      get $client() {
+        return host.$client;
+      },
       sanitize: (value) => host.sanitize(value),
       quote: (name) => host.quote(name),
       trigger: (event, query) => host.trigger(event, query),
@@ -105,7 +113,13 @@ export class Adapter extends BaseAdapter implements DatabaseAdapter {
     array,
     type,
   }: CreateAttribute): Promise<void> {
-    await this.ddl.createAttribute({ key: name, collection, size, array, type });
+    await this.ddl.createAttribute({
+      key: name,
+      collection,
+      size,
+      array,
+      type,
+    });
   }
 
   public async createAttributes(
@@ -405,7 +419,10 @@ export class Adapter extends BaseAdapter implements DatabaseAdapter {
     sql = this.trigger(EventsEnum.DocumentCreate, sql);
 
     try {
-      const { rows } = await this.client.query<{ _id: number; _uid: string }>(sql, allValues);
+      const { rows } = await this.client.query<{ _id: number; _uid: string }>(
+        sql,
+        allValues,
+      );
 
       // Set $sequence from returned IDs
       for (let i = 0; i < documents.length; i++) {
@@ -628,7 +645,10 @@ export class Adapter extends BaseAdapter implements DatabaseAdapter {
         `.trim();
 
     try {
-      const { rows } = await this.client.query<{ $sequence: number; $id: string }>(sql, params);
+      const { rows } = await this.client.query<{
+        $sequence: number;
+        $id: string;
+      }>(sql, params);
 
       if (rows.length === 0) {
         return [];

@@ -54,9 +54,9 @@ describe("authorize", () => {
     // Bypass takes precedence over the empty-permissions rejection,
     // mirroring the old `!Authorization.getStatus()` early return.
     expect(authorize(SYSTEM_CONTEXT, [], PermissionEnum.Delete)).toBe(true);
-    expect(
-      authorize(SYSTEM_CONTEXT, ["user:123"], PermissionEnum.Create),
-    ).toBe(true);
+    expect(authorize(SYSTEM_CONTEXT, ["user:123"], PermissionEnum.Create)).toBe(
+      true,
+    );
   });
 
   it("matches role strings produced by Role.toString()", () => {

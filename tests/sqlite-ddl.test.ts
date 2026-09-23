@@ -7,10 +7,7 @@ import {
   RelationSideEnum,
 } from "@core/enums.js";
 import { DatabaseException } from "@errors/base.js";
-import {
-  SQLiteDdl,
-  type SQLiteDdlContext,
-} from "@adapters/sqlite-ddl.js";
+import { SQLiteDdl, type SQLiteDdlContext } from "@adapters/sqlite-ddl.js";
 import { SQLiteClient } from "@adapters/sqlite.js";
 import { SQLiteSqlBuilder } from "@adapters/sqlite-sql-builder.js";
 import type { Meta } from "@adapters/base.js";
@@ -61,11 +58,7 @@ const attribute = (
     ...options,
   });
 
-const index = (
-  id: string,
-  type: IndexEnum,
-  attributes: string[],
-): Doc<Index> =>
+const index = (id: string, type: IndexEnum, attributes: string[]): Doc<Index> =>
   new Doc<Index>({
     $id: id,
     key: id,
@@ -100,7 +93,10 @@ describe("SQLiteDdl", () => {
       expect(await ddl.exists("app", "users_perms")).toBe(true);
 
       const table = SQLiteSqlBuilder.getTableName(meta, "users");
-      const permissionTable = SQLiteSqlBuilder.getTableName(meta, "users_perms");
+      const permissionTable = SQLiteSqlBuilder.getTableName(
+        meta,
+        "users_perms",
+      );
       const { rows: tables } = await client.query<{ name: string }>(
         "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN (?, ?) ORDER BY name",
         [table, permissionTable],
@@ -192,8 +188,9 @@ describe("SQLiteDdl", () => {
       const schema = await ddl.getSchemaAttributes("items");
       expect(schema.map((column) => column.getId())).toContain("number");
       expect(schema.map((column) => column.getId())).not.toContain("renamed");
-      expect(schema.find((column) => column.getId() === "number")?.get("dataType"))
-        .toBe("integer");
+      expect(
+        schema.find((column) => column.getId() === "number")?.get("dataType"),
+      ).toBe("integer");
 
       const { rows: indexes } = await client.query<{ name: string }>(
         "SELECT name FROM pragma_index_list(?)",
@@ -234,10 +231,14 @@ describe("SQLiteDdl", () => {
       );
 
       expect(
-        (await ddl.getSchemaAttributes("users")).map((column) => column.getId()),
+        (await ddl.getSchemaAttributes("users")).map((column) =>
+          column.getId(),
+        ),
       ).toContain("account");
       expect(
-        (await ddl.getSchemaAttributes("profiles")).map((column) => column.getId()),
+        (await ddl.getSchemaAttributes("profiles")).map((column) =>
+          column.getId(),
+        ),
       ).toContain("owner");
 
       await ddl.deleteRelationship(
@@ -250,10 +251,14 @@ describe("SQLiteDdl", () => {
         RelationSideEnum.Parent,
       );
       expect(
-        (await ddl.getSchemaAttributes("users")).map((column) => column.getId()),
+        (await ddl.getSchemaAttributes("users")).map((column) =>
+          column.getId(),
+        ),
       ).not.toContain("account");
       expect(
-        (await ddl.getSchemaAttributes("profiles")).map((column) => column.getId()),
+        (await ddl.getSchemaAttributes("profiles")).map((column) =>
+          column.getId(),
+        ),
       ).not.toContain("owner");
     } finally {
       await client.disconnect();
@@ -262,7 +267,11 @@ describe("SQLiteDdl", () => {
 
   test("rejects fulltext and GIN-style indexes before partial DDL", async () => {
     const client = new SQLiteClient(":memory:");
-    const meta = { schema: "app", namespace: "unsupported", sharedTables: false };
+    const meta = {
+      schema: "app",
+      namespace: "unsupported",
+      sharedTables: false,
+    };
     const ddl = createDdl(client, meta);
 
     try {
@@ -277,9 +286,7 @@ describe("SQLiteDdl", () => {
 
       await ddl.createCollection({
         name: "articles",
-        attributes: [
-          attribute("tags", AttributeEnum.String, { array: true }),
-        ],
+        attributes: [attribute("tags", AttributeEnum.String, { array: true })],
       });
       await expect(
         ddl.createIndex({

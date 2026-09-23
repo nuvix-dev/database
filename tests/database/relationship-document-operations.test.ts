@@ -964,7 +964,10 @@ describe("Relationship Document Operations", () => {
       await system.deleteDocument(usersCollectionId, user.getId());
 
       // Post should be deleted
-      const deletedPost = await system.getDocument(postsCollectionId, post.getId());
+      const deletedPost = await system.getDocument(
+        postsCollectionId,
+        post.getId(),
+      );
       expect(deletedPost.empty()).toBe(true);
     });
 
@@ -1131,9 +1134,11 @@ describe("Relationship Document Operations", () => {
       expect(updatedPost.get("tags")).toEqual([]);
 
       // Verify tag's posts are cleared
-      const updatedTag = await system.getDocument(tagsCollectionId, tag.getId(), [
-        Query.populate("posts", []),
-      ]);
+      const updatedTag = await system.getDocument(
+        tagsCollectionId,
+        tag.getId(),
+        [Query.populate("posts", [])],
+      );
       expect(updatedTag.get("posts")).toHaveLength(0);
     });
 
@@ -1180,9 +1185,11 @@ describe("Relationship Document Operations", () => {
         }),
       );
 
-      let updatedPost = await system.getDocument(postsCollectionId, post.getId(), [
-        Query.populate("tags", []),
-      ]);
+      let updatedPost = await system.getDocument(
+        postsCollectionId,
+        post.getId(),
+        [Query.populate("tags", [])],
+      );
       expect(updatedPost.get("tags")).toHaveLength(2);
 
       // Connect and disconnect
@@ -1291,8 +1298,14 @@ describe("Relationship Document Operations", () => {
       await system.deleteDocument(postsCollectionId, post.getId());
 
       // Tags should be deleted
-      const deletedTag1 = await system.getDocument(tagsCollectionId, tag1.getId());
-      const deletedTag2 = await system.getDocument(tagsCollectionId, tag2.getId());
+      const deletedTag1 = await system.getDocument(
+        tagsCollectionId,
+        tag1.getId(),
+      );
+      const deletedTag2 = await system.getDocument(
+        tagsCollectionId,
+        tag2.getId(),
+      );
       expect(deletedTag1.empty()).toBe(true);
       expect(deletedTag2.empty()).toBe(true);
     });

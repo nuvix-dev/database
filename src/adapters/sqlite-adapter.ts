@@ -1,6 +1,10 @@
 import type { Database as BunSQLiteDatabase } from "bun:sqlite";
 import type { AuthContext } from "@core/auth.js";
-import { Database, type PopulateQuery, type ProcessedQuery } from "@core/database.js";
+import {
+  Database,
+  type PopulateQuery,
+  type ProcessedQuery,
+} from "@core/database.js";
 import { Doc } from "@core/doc.js";
 import { Query } from "@core/query.js";
 import {
@@ -15,10 +19,7 @@ import { BaseAdapter } from "./base.js";
 import { SQLiteDdl } from "./sqlite-ddl.js";
 import { processSQLiteException } from "./sqlite-error-mapper.js";
 import { SQLiteSqlBuilder } from "./sqlite-sql-builder.js";
-import {
-  decodeSQLiteRow,
-  type SQLiteValueMetadata,
-} from "./sqlite-values.js";
+import { decodeSQLiteRow, type SQLiteValueMetadata } from "./sqlite-values.js";
 import {
   SQLiteClient,
   SQLiteTransaction,
@@ -38,7 +39,7 @@ import type {
 } from "./types.js";
 import type { Entities } from "@nuvix/db";
 import { QueryBuilder } from "@utils/query-builder.js";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../types.js";
 import type { Collection } from "@validators/schema.js";
 
 export type SQLiteAdapterConfig =
@@ -124,7 +125,9 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     await this.ddl.delete(name);
   }
 
-  public async createCollection(options: CreateCollectionOptions): Promise<void> {
+  public async createCollection(
+    options: CreateCollectionOptions,
+  ): Promise<void> {
     await this.ddl.createCollection(options);
   }
 
@@ -163,7 +166,10 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     await this.ddl.renameAttribute(collection, oldName, newName);
   }
 
-  public async deleteAttribute(collection: string, name: string): Promise<void> {
+  public async deleteAttribute(
+    collection: string,
+    name: string,
+  ): Promise<void> {
     await this.ddl.deleteAttribute(collection, name);
   }
 
@@ -274,7 +280,9 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
         );
         const id = rows[0]?._id;
         if (!id) {
-          throw new DatabaseException('Error creating document empty "$sequence"');
+          throw new DatabaseException(
+            'Error creating document empty "$sequence"',
+          );
         }
         await this.insertPermissions(tx, name, document, id);
         return id;
@@ -297,14 +305,16 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     const name = this.sanitize(collection);
     try {
       const sequences = await this.client.transaction(async (tx) => {
-        const rows = documents.map((document) => this.documentAttributes(document));
-        const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
+        const rows = documents.map((document) =>
+          this.documentAttributes(document),
+        );
+        const columns = [
+          ...new Set(rows.flatMap((row) => Object.keys(row))),
+        ].sort();
         const values = rows.flatMap((row) =>
           columns.map((column) => row[column] ?? null),
         );
-        const groups = rows.map(
-          () => `(${columns.map(() => "?").join(", ")})`,
-        );
+        const groups = rows.map(() => `(${columns.map(() => "?").join(", ")})`);
         let sql = `INSERT INTO ${this.getSQLTable(name)} (${columns.map((column) => this.quote(column)).join(", ")}) VALUES ${groups.join(", ")} RETURNING "_id", "_uid"${this.$sharedTables ? ', "_tenant"' : ""}`;
         sql = this.trigger(EventsEnum.DocumentsCreate, sql);
         const result = await tx.query<{
@@ -330,7 +340,12 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
           return sequence;
         });
         for (let index = 0; index < documents.length; index++) {
-          await this.insertPermissions(tx, name, documents[index]!, assigned[index]!);
+          await this.insertPermissions(
+            tx,
+            name,
+            documents[index]!,
+            assigned[index]!,
+          );
         }
         return assigned;
       });
@@ -388,7 +403,10 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
       attributes["_permissions"] = updates.getPermissions();
     }
     const entries = Object.entries(attributes)
-      .filter(([key]) => ![...this.$internalAttrs, "$skipPermissionsUpdate"].includes(key))
+      .filter(
+        ([key]) =>
+          ![...this.$internalAttrs, "$skipPermissionsUpdate"].includes(key),
+      )
       .map(([key, value]) => [this.sanitize(key), value] as const);
     if (entries.length === 0) return 0;
 
@@ -494,16 +512,19 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
         const rows = changes.map(({ new: document }) =>
           this.documentAttributes(document),
         );
-        const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
+        const columns = [
+          ...new Set(rows.flatMap((row) => Object.keys(row))),
+        ].sort();
         const values = rows.flatMap((row) =>
           columns.map((column) => row[column] ?? null),
         );
-        const groups = rows.map(
-          () => `(${columns.map(() => "?").join(", ")})`,
-        );
+        const groups = rows.map(() => `(${columns.map(() => "?").join(", ")})`);
         const representative = Object.fromEntries(
           columns
-            .filter((column) => !["_id", "_uid", "_tenant", "_createdAt"].includes(column))
+            .filter(
+              (column) =>
+                !["_id", "_uid", "_tenant", "_createdAt"].includes(column),
+            )
             .map((column) => [column, null]),
         );
         let sql = SQLiteSqlBuilder.getUpsertStatement(
@@ -523,7 +544,10 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
           _tenant?: number;
         }>(sql, values);
         const byIdentity = new Map(
-          result.rows.map((row) => [this.identity(row._uid, row._tenant), row._id]),
+          result.rows.map((row) => [
+            this.identity(row._uid, row._tenant),
+            row._id,
+          ]),
         );
         const sequences = changes.map(({ new: document }) => {
           const sequence = byIdentity.get(
@@ -566,7 +590,9 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     ctx: AuthContext,
     collection: string,
     query: ProcessedQuery,
-    { forPermission = PermissionEnum.Read }: { forPermission?: PermissionEnum } = {},
+    {
+      forPermission = PermissionEnum.Read,
+    }: { forPermission?: PermissionEnum } = {},
   ): Promise<Record<string, unknown>[]> {
     const built = this.buildSql(query, { forPermission, ctx });
 
@@ -575,9 +601,7 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
         built.sql,
         built.params,
       );
-      return rows.map((row) =>
-        decodeSQLiteRow(row, this.queryMetadata(query)),
-      );
+      return rows.map((row) => decodeSQLiteRow(row, this.queryMetadata(query)));
     } catch (error) {
       return this.processException(
         error,
@@ -684,9 +708,15 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     }
   }
 
-  public async increaseDocumentAttribute(
-    { collection, id, attribute, updatedAt, value, min, max }: IncreaseDocumentAttribute,
-  ): Promise<boolean> {
+  public async increaseDocumentAttribute({
+    collection,
+    id,
+    attribute,
+    updatedAt,
+    value,
+    min,
+    max,
+  }: IncreaseDocumentAttribute): Promise<boolean> {
     const column = this.quote(this.sanitize(attribute));
     const params: unknown[] = [value, updatedAt, id];
     let sql = `UPDATE ${this.getSQLTable(collection)} SET ${column} = ${column} + ?, "_updatedAt" = ? WHERE "_uid" = ? ${this.getTenantQuery(collection)}`;
@@ -705,7 +735,10 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
       const result = await this.client.query(sql, params);
       return result.rowCount > 0;
     } catch (error) {
-      return this.processException(error, "Failed to increase document attribute");
+      return this.processException(
+        error,
+        "Failed to increase document attribute",
+      );
     }
   }
 
@@ -726,10 +759,9 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     const sql = this.trigger(EventsEnum.DocumentCount, built.sql);
 
     try {
-      const { rows } = await this.client.query<{ sum?: number | string | null }>(
-        sql,
-        built.params,
-      );
+      const { rows } = await this.client.query<{
+        sum?: number | string | null;
+      }>(sql, built.params);
       return Number(rows[0]?.sum ?? 0);
     } catch (error) {
       return this.processException(error, "Failed to count documents");
@@ -756,10 +788,9 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
     const sql = this.trigger(EventsEnum.DocumentSum, built.sql);
 
     try {
-      const { rows } = await this.client.query<{ sum?: number | string | null }>(
-        sql,
-        built.params,
-      );
+      const { rows } = await this.client.query<{
+        sum?: number | string | null;
+      }>(sql, built.params);
       return Number(rows[0]?.sum ?? 0);
     } catch (error) {
       return this.processException(error, "Failed to sum documents");
@@ -893,9 +924,7 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
       sequence,
       type,
       permissions,
-      ...(this.$sharedTables
-        ? [document.getTenant() ?? this.$tenantId]
-        : []),
+      ...(this.$sharedTables ? [document.getTenant() ?? this.$tenantId] : []),
     ]);
     const placeholders = rows.map(
       () => `(${columns.map(() => "?").join(", ")})`,
@@ -917,12 +946,7 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
       [sequence],
       document.getTenant(),
     );
-    await this.insertPermissions(
-      client,
-      collection,
-      document,
-      sequence,
-    );
+    await this.insertPermissions(client, collection, document, sequence);
   }
 
   private async syncPermissions(
@@ -1029,7 +1053,10 @@ export class SQLiteAdapter extends BaseAdapter implements DatabaseAdapter {
   }
 
   private queryMetadata(
-    query: Pick<ProcessedQuery | PopulateQuery, "collection" | "populateQueries">,
+    query: Pick<
+      ProcessedQuery | PopulateQuery,
+      "collection" | "populateQueries"
+    >,
     prefix = "",
   ): SQLiteValueMetadata[] {
     const internal: SQLiteValueMetadata[] = [

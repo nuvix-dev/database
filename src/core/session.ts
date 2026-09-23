@@ -18,7 +18,7 @@
 import type { Database } from "./database.js";
 import type { AuthContext } from "./auth.js";
 import type { Entities } from "@nuvix/db";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../types.js";
 import { QueryBuilder } from "@utils/query-builder.js";
 import { Query } from "./query.js";
 import { Doc } from "./doc.js";
@@ -26,14 +26,12 @@ import type { Collection } from "@validators/schema.js";
 import { PermissionEnum } from "./enums.js";
 import { documentPlane } from "./document-plane.js";
 
-type DynamicCollection<C extends string> = Exclude<
-  keyof Entities,
-  "_metadata"
-> extends never
-  ? C
-  : string extends C
+type DynamicCollection<C extends string> =
+  Exclude<keyof Entities, "_metadata"> extends never
     ? C
-    : never;
+    : string extends C
+      ? C
+      : never;
 type SessionCollection<C extends string> = C extends keyof Entities
   ? C
   : DynamicCollection<C>;
@@ -134,7 +132,7 @@ export class Session {
   createDocument<D extends Record<string, any>, C extends string = string>(
     collectionId: DynamicCollection<C>,
     document: Doc<D> | D,
-  ): Promise<Doc<D>>;
+  ): Promise<Doc<D & IEntity>>;
   createDocument(
     collectionId: string,
     document: Doc<Partial<IEntity>> | Partial<IEntity>,
@@ -153,10 +151,7 @@ export class Session {
   createDocuments<
     D extends Doc<Record<string, any>>,
     C extends string = string,
-  >(
-    collectionId: DynamicCollection<C>,
-    documents: D[],
-  ): Promise<Doc[]>;
+  >(collectionId: DynamicCollection<C>, documents: D[]): Promise<Doc[]>;
   createDocuments(
     collectionId: string,
     documents: Doc<any>[] | Record<string, any>[],
@@ -173,10 +168,7 @@ export class Session {
     id: string,
     document: Entities[C] | Doc<Entities[C]>,
   ): Promise<Doc<Entities[C]>>;
-  updateDocument<
-    D extends Doc<Record<string, any>>,
-    C extends string = string,
-  >(
+  updateDocument<D extends Doc<Record<string, any>>, C extends string = string>(
     collectionId: DynamicCollection<C>,
     id: string,
     document: D | Doc<D>,
@@ -467,7 +459,10 @@ export class Session {
    * Purges all cached variants of a document. Cache maintenance only —
    * no authorization is involved.
    */
-  purgeCachedDocument(collectionId: string, doc: Doc<any> | string): Promise<void> {
+  purgeCachedDocument(
+    collectionId: string,
+    doc: Doc<any> | string,
+  ): Promise<void> {
     return this.database[documentPlane].purgeCachedDocument(collectionId, doc);
   }
 

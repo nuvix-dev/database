@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { Permission } from "@utils/permission.js";
 import { Role } from "@utils/role.js";
-import { Doc, DocException, IEntity } from "index.js";
+import { Doc, DocException, IEntity } from "../dist/index.js";
 
 describe("Doc Class", () => {
   describe("Constructor", () => {

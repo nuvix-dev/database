@@ -4,12 +4,7 @@ import { DatabaseException } from "@errors/base.js";
 import type { Attribute } from "@validators/schema.js";
 import { JsonParam } from "./types.js";
 
-export type SQLiteBoundValue =
-  | null
-  | string
-  | number
-  | bigint
-  | Uint8Array;
+export type SQLiteBoundValue = null | string | number | bigint | Uint8Array;
 
 export type SQLiteValueMetadata = Pick<Attribute, "$id" | "type" | "array">;
 

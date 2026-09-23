@@ -311,8 +311,12 @@ export class Filter extends Base {
   ): boolean {
     const attributeType = attributeSchema.type;
     let validator:
-      DatetimeValidator | Integer | FloatValidator | Boolean | Text | null =
-      null;
+      | DatetimeValidator
+      | Integer
+      | FloatValidator
+      | Boolean
+      | Text
+      | null = null;
 
     switch (attributeType) {
       case AttributeEnum.String:

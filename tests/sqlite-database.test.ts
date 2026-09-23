@@ -16,9 +16,9 @@ const databases: Database[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    databases.splice(0).map((database) =>
-      database.getAdapter().$client.disconnect(),
-    ),
+    databases
+      .splice(0)
+      .map((database) => database.getAdapter().$client.disconnect()),
   );
 });
 
@@ -81,18 +81,17 @@ describe("Database with SQLiteAdapter", () => {
         permissions: [Permission.create(Role.any())],
         documentSecurity: false,
       });
-      await database.system().createDocument(
-        collection,
-        new Doc({ [attribute]: collection }),
-      );
+      await database
+        .system()
+        .createDocument(collection, new Doc({ [attribute]: collection }));
     }
 
-    const dotted = await database.system().find("foo.bar", [
-      Query.equal("value.part", ["foo.bar"]),
-    ]);
-    const plain = await database.system().find("foobar", [
-      Query.equal("valuepart", ["foobar"]),
-    ]);
+    const dotted = await database
+      .system()
+      .find("foo.bar", [Query.equal("value.part", ["foo.bar"])]);
+    const plain = await database
+      .system()
+      .find("foobar", [Query.equal("valuepart", ["foobar"])]);
 
     expect(dotted.map((document) => document.get("value.part"))).toEqual([
       "foo.bar",
@@ -121,9 +120,7 @@ describe("Database with SQLiteAdapter", () => {
     ]);
 
     expect(loaded.get("name")).toBe("Ada");
-    expect(selected.map((document) => document.get("name"))).toEqual([
-      "Grace",
-    ]);
+    expect(selected.map((document) => document.get("name"))).toEqual(["Grace"]);
     expect(await session.count("users")).toBe(2);
     expect(await session.sum("users", "score")).toBe(30);
   });
@@ -183,10 +180,14 @@ describe("Database with SQLiteAdapter", () => {
     expect(await database.for("user:reader").count("secured")).toBe(1);
     expect(await database.for("user:reader").sum("secured", "score")).toBe(7);
     expect(
-      await database.for("user:reader").find("secured", [], PermissionEnum.Update),
+      await database
+        .for("user:reader")
+        .find("secured", [], PermissionEnum.Update),
     ).toHaveLength(0);
     expect(
-      await database.for("user:editor").find("secured", [], PermissionEnum.Update),
+      await database
+        .for("user:editor")
+        .find("secured", [], PermissionEnum.Update),
     ).toHaveLength(1);
     expect(await database.for("user:other").find("secured")).toHaveLength(0);
   });
@@ -219,18 +220,24 @@ describe("Database with SQLiteAdapter", () => {
     const author = await database
       .system()
       .createDocument("authors", new Doc({ name: "Ada" }));
-    await database.system().createDocument(
-      "articles",
-      new Doc({ title: "One", author: author.getId() }),
-    );
-    await database.system().createDocument(
-      "articles",
-      new Doc({ title: "Two", author: author.getId() }),
-    );
+    await database
+      .system()
+      .createDocument(
+        "articles",
+        new Doc({ title: "One", author: author.getId() }),
+      );
+    await database
+      .system()
+      .createDocument(
+        "articles",
+        new Doc({ title: "Two", author: author.getId() }),
+      );
 
-    const loaded = await database.system().getDocument("authors", author.getId(), [
-      Query.populate("articles", [Query.select(["title"])]),
-    ]);
+    const loaded = await database
+      .system()
+      .getDocument("authors", author.getId(), [
+        Query.populate("articles", [Query.select(["title"])]),
+      ]);
     const articles = loaded.get("articles") as Doc<any>[];
     expect(articles.map((article) => article.get("title")).sort()).toEqual([
       "One",
@@ -244,7 +251,8 @@ describe("Database with SQLiteAdapter", () => {
     const parentAdapter = database.getAdapter();
 
     await session.withTransaction(async (outer) => {
-      const outerDatabase = (outer as unknown as { database: Database }).database;
+      const outerDatabase = (outer as unknown as { database: Database })
+        .database;
       expect(outerDatabase).not.toBe(database);
       expect(outerDatabase.getAdapter()).not.toBe(parentAdapter);
       expect(outerDatabase.getAdapter().$client.__type).toBe("transaction");
@@ -252,9 +260,8 @@ describe("Database with SQLiteAdapter", () => {
       await outer.createDocument("users", new Doc({ name: "Outer", score: 1 }));
       await expect(
         outer.withTransaction(async (nested) => {
-          const nestedDatabase = (
-            nested as unknown as { database: Database }
-          ).database;
+          const nestedDatabase = (nested as unknown as { database: Database })
+            .database;
           expect(nestedDatabase).toBe(outerDatabase);
           await nested.createDocument(
             "users",

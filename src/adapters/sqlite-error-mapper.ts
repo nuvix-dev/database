@@ -48,9 +48,10 @@ function isUniqueConstraint(code: string, message: string): boolean {
 }
 
 function isMissing(error: Error, code: string, subject: "table" | "column") {
-  return code === "SQLITE_ERROR" && error.message
-    .toLowerCase()
-    .includes(`no such ${subject}`);
+  return (
+    code === "SQLITE_ERROR" &&
+    error.message.toLowerCase().includes(`no such ${subject}`)
+  );
 }
 
 /** Maps an error raised by bun:sqlite to the shared typed exception hierarchy. */

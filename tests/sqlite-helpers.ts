@@ -25,8 +25,5 @@ export function createSQLiteTestAdapter(
 }
 
 export function createSQLiteTestDb(meta: SQLiteTestMeta = {}): Database {
-  return new Database(
-    createSQLiteTestAdapter(meta),
-    new Cache(new Memory()),
-  );
+  return new Database(createSQLiteTestAdapter(meta), new Cache(new Memory()));
 }

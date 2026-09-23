@@ -12,7 +12,7 @@ import type { ProcessedQuery } from "@core/database.js";
 import { Query } from "@core/query.js";
 import { DatabaseException } from "@errors/base.js";
 import type { Collection } from "@validators/schema.js";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../src/types.js";
 
 const meta = {
   schema: "app.data",
@@ -21,8 +21,7 @@ const meta = {
   tenantId: 7,
 };
 
-const quoteValue = (value: string): string =>
-  `'${value.replace(/'/g, "''")}'`;
+const quoteValue = (value: string): string => `'${value.replace(/'/g, "''")}'`;
 
 const cursor = (values: Record<string, unknown>): Doc<IEntity> =>
   new Doc<IEntity>({
@@ -271,9 +270,7 @@ describe("SQLiteSqlBuilder complete selects", () => {
     );
 
     expect(built.sql).toContain('"main"."_tenant" IN (?)');
-    expect(built.sql).toContain(
-      'ORDER BY "main"."name" ASC, "main"."_id" ASC',
-    );
+    expect(built.sql).toContain('ORDER BY "main"."name" ASC, "main"."_id" ASC');
     expect(built.params).toEqual([18, 7, "M", "M", 4, 10, 2]);
     expect(aggregate.sql).toStartWith('SELECT COUNT(1) AS "sum" FROM (');
   });

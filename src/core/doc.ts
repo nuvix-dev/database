@@ -1,7 +1,7 @@
 import { DatabaseException } from "@errors/base.js";
 import { Permission } from "@utils/permission.js";
-import { IEntity, IEntityInput } from "types.js";
 import { colors } from "@utils/colors.js";
+import { IEntity, IEntityInput } from "../types.js";
 
 type IsReferenceObject<T> = T extends { $id: string }
   ? true
@@ -37,17 +37,17 @@ function isEntityLike(value: unknown): value is Record<string, unknown> {
 export class Doc<
   T extends Record<string, any> & Partial<IEntity> = Partial<IEntity>,
 > {
-  #_data: Record<string, any> = {};
+  #_data: Record<string, unknown> = {};
 
   /**
    * Creates a new Doc instance.
    */
   constructor(data: T extends IEntity ? FilterInput<T> : never);
   constructor(
-    data?: (T | TransformEntity<T>) | (IEntityInput & Record<string, any>),
+    data?: (T | TransformEntity<T>) | (IEntityInput & Record<string, unknown>),
   );
   constructor(
-    data?: (T | TransformEntity<T>) | (IEntityInput & Record<string, any>),
+    data?: (T | TransformEntity<T>) | (IEntityInput & Record<string, unknown>),
   ) {
     this.#_data = {};
     if (data) {
@@ -60,20 +60,7 @@ export class Doc<
       }
 
       for (const [key, value] of Object.entries(data)) {
-        if (Array.isArray(value)) {
-          this.#_data[key] = value.map((item) =>
-            isEntityLike(item)
-              ? item instanceof Doc
-                ? item
-                : new Doc(item as any)
-              : item,
-          );
-        } else if (isEntityLike(value)) {
-          this.#_data[key] =
-            value instanceof Doc ? value : new Doc(value as any);
-        } else {
-          this.#_data[key] = value ?? null;
-        }
+        setValue(this.#_data, key, value);
       }
     }
   }
@@ -110,7 +97,9 @@ export class Doc<
     if (arguments.length === 1) {
       _default = null;
     }
-    return value === undefined ? (_default as D) : value;
+    return value === undefined
+      ? (_default as D)
+      : (value as Exclude<TransformEntity<T>[K], undefined>);
   }
 
   /**
@@ -131,19 +120,7 @@ export class Doc<
     value: V,
   ): Doc<Simplify<T & Record<K, TransformField<V>>>>;
   public set<K extends string, V extends unknown>(name: K, value: V): any {
-    if (Array.isArray(value)) {
-      this.#_data[name] = value.map((item) =>
-        isEntityLike(item)
-          ? item instanceof Doc
-            ? item
-            : new Doc(item as any)
-          : item,
-      );
-    } else if (isEntityLike(value)) {
-      this.#_data[name] = value instanceof Doc ? value : new Doc(value as any);
-    } else {
-      this.#_data[name] = value ?? null;
-    }
+    setValue(this.#_data, name, value);
     return this;
   }
 
@@ -184,20 +161,7 @@ export class Doc<
   ): Doc<Simplify<T & D>>;
   public setAll(data: FilterInput<T>): this {
     for (const [key, value] of Object.entries(data)) {
-      if (Array.isArray(value)) {
-        this.#_data[key] = value.map((item) =>
-          isEntityLike(item)
-            ? item instanceof Doc
-              ? item
-              : new Doc(item as any)
-            : item,
-        );
-      } else if (isEntityLike(value)) {
-        this.#_data[key] =
-          (value as any) instanceof Doc ? value : new Doc(value as any);
-      } else {
-        this.#_data[key] = value ?? null;
-      }
+      setValue(this.#_data, key, value);
     }
     return this;
   }
@@ -210,7 +174,7 @@ export class Doc<
     name: K,
     value: TransformField<T[K]> extends Array<unknown>
       ? TransformField<T[K]>[number]
-      : TransformField<T[K][number]>,
+      : unknown,
   ): this {
     if (!Array.isArray(this.#_data[name])) {
       throw new DocException(
@@ -233,7 +197,7 @@ export class Doc<
    */
   public prepend<K extends string & keyof T>(
     name: K,
-    value: TransformField<T[K]> extends Array<any>
+    value: TransformField<T[K]> extends Array<unknown>
       ? TransformField<T[K]>[number]
       : TransformField<T[K]>,
   ): this {
@@ -299,23 +263,23 @@ export class Doc<
   /**
    * Gets the creation date, or null if not set. If the value is a string, it is converted to a Date object.
    */
-  public createdAt(): Date | null {
+  public createdAt<V extends T["$createdAt"]>(): V {
     const value = this.get("$createdAt", null);
     if (typeof value === "string") {
-      return new Date(value);
+      return new Date(value) as V;
     }
-    return value as Date | null;
+    return value as unknown as V;
   }
 
   /**
    * Gets the last updated date, or null if not set. If the value is a string, it is converted to a Date object.
    */
-  public updatedAt(): Date | null {
+  public updatedAt<V extends T["$updatedAt"]>(): V {
     const value = this.get("$updatedAt", null);
     if (typeof value === "string") {
-      return new Date(value);
+      return new Date(value) as V;
     }
-    return value as Date | null;
+    return value as unknown as V;
   }
 
   /**
@@ -559,13 +523,13 @@ export class Doc<
     for (const key of keys) {
       const value = this.#_data[key as string];
       if (value instanceof Doc) {
-        (cloned as any).#_data[key as string] = value.clone();
+        cloned.#_data[key as string] = value.clone();
       } else if (Array.isArray(value)) {
-        (cloned as any).#_data[key as string] = value.map((item) =>
+        cloned.#_data[key as string] = value.map((item) =>
           item instanceof Doc ? item.clone() : item,
         );
       } else {
-        (cloned as any).#_data[key as string] = value;
+        cloned.#_data[key as string] = value;
       }
     }
     return cloned;
@@ -635,3 +599,19 @@ ${"  ".repeat(depth)}}`;
 }
 
 export class DocException extends DatabaseException {}
+
+function setValue(obj: Record<string, unknown>, key: string, value: unknown) {
+  if (Array.isArray(value)) {
+    obj[key] = value.map((item) =>
+      isEntityLike(item) ? (item instanceof Doc ? item : new Doc(item)) : item,
+    );
+  } else if (isEntityLike(value)) {
+    obj[key] = value instanceof Doc ? value : new Doc(value);
+  } else {
+    if (key === "$createdAt" || key === "$updatedAt") {
+      obj[key] = value && typeof value === "string" ? new Date(value) : value;
+    } else {
+      obj[key] = value ?? null;
+    }
+  }
+}

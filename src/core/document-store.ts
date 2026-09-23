@@ -20,12 +20,12 @@
  */
 import type { Database } from "./database.js";
 import { Base } from "./base.js";
-import {
-  AttributeEnum,
-  EventsEnum,
-  PermissionEnum,
-} from "./enums.js";
-import type { Attribute, Collection, RelationOptions } from "@validators/schema.js";
+import { AttributeEnum, EventsEnum, PermissionEnum } from "./enums.js";
+import type {
+  Attribute,
+  Collection,
+  RelationOptions,
+} from "@validators/schema.js";
 import { QueryBuilder } from "@utils/query-builder.js";
 import { Query } from "./query.js";
 import { Doc } from "./doc.js";
@@ -46,7 +46,7 @@ import { ID } from "@utils/id.js";
 import { Structure } from "@validators/structure.js";
 import { MethodType } from "@validators/query/base.js";
 import { Logger } from "@utils/logger.js";
-import type { IEntity } from "types.js";
+import type { IEntity } from "../types.js";
 import { Session } from "./session.js";
 import { documentPlane } from "./document-plane.js";
 import type { DocumentPlane } from "./document-plane.js";
@@ -119,11 +119,7 @@ export interface DocumentStoreInternals {
   /** The metadata collection definition (`Base.COLLECTION`, read-only usage). */
   readonly metadataCollection: () => Collection;
   /** Protected Base.cast, invoked with the receiving Database. */
-  cast(
-    db: Database,
-    collection: Doc<Collection>,
-    document: Doc<any>,
-  ): Doc<any>;
+  cast(db: Database, collection: Doc<Collection>, document: Doc<any>): Doc<any>;
   /** Protected Base.encode, invoked with the receiving Database. */
   encode(
     db: Database,
@@ -133,7 +129,10 @@ export interface DocumentStoreInternals {
   /** Protected Base.decode, invoked with the receiving Database. */
   decode(
     db: Database,
-    query: Pick<ProcessedQuery | PopulateQuery, "collection" | "populateQueries">,
+    query: Pick<
+      ProcessedQuery | PopulateQuery,
+      "collection" | "populateQueries"
+    >,
     document: Doc<any>,
   ): Promise<Doc<any>>;
   /** Protected Base.processFindResults, invoked with the receiving Database. */
@@ -234,7 +233,10 @@ export class DocumentStore implements DocumentPlane {
   }
 
   private decode(
-    query: Pick<ProcessedQuery | PopulateQuery, "collection" | "populateQueries">,
+    query: Pick<
+      ProcessedQuery | PopulateQuery,
+      "collection" | "populateQueries"
+    >,
     document: Doc<any>,
   ): Promise<Doc<any>> {
     return this.internals.decode(this.db, query, document);
@@ -256,7 +258,12 @@ export class DocumentStore implements DocumentPlane {
     documentKey?: string;
     filtersHash?: string;
   } {
-    return this.internals.getCacheKeys(this.db, collectionId, id, processedQuery);
+    return this.internals.getCacheKeys(
+      this.db,
+      collectionId,
+      id,
+      processedQuery,
+    );
   }
 
   /**
@@ -459,10 +466,7 @@ export class DocumentStore implements DocumentPlane {
 
     if (this.adapter.$sharedTables) {
       if (this.adapter.$tenantPerDocument) {
-        if (
-          collection.getId() !== Base.METADATA &&
-          doc.getTenant() === null
-        ) {
+        if (collection.getId() !== Base.METADATA && doc.getTenant() === null) {
           throw new DatabaseException(
             "Missing tenant. Tenant must be set when tenant per document is enabled.",
           );
@@ -488,7 +492,9 @@ export class DocumentStore implements DocumentPlane {
 
     const result = await this.db.withTransaction(async (db) => {
       doc = await this.silent(() => createRelationships(db, collection, doc));
-      return db.getAdapter().createDocument(SYSTEM_CONTEXT, collection.getId(), doc);
+      return db
+        .getAdapter()
+        .createDocument(SYSTEM_CONTEXT, collection.getId(), doc);
     });
 
     const castedResult = this.cast(collection, result);
@@ -590,11 +596,9 @@ export class DocumentStore implements DocumentPlane {
       const resolvedDocuments = await Promise.all(
         createdDocuments.map((doc) => createRelationships(db, collection, doc)),
       );
-      return db.getAdapter().createDocuments(
-        SYSTEM_CONTEXT,
-        collection.getId(),
-        resolvedDocuments,
-      );
+      return db
+        .getAdapter()
+        .createDocuments(SYSTEM_CONTEXT, collection.getId(), resolvedDocuments);
     });
     const castedDocuments = updatedDocuments.map((doc) =>
       this.cast(collection, doc),
@@ -735,14 +739,20 @@ export class DocumentStore implements DocumentPlane {
       const encodedDocument = await this.internals.encode(db, collection, doc);
 
       if (relationships.length > 0) {
-        doc = await updateDocumentRelationships(db, collection, encodedDocument);
+        doc = await updateDocumentRelationships(
+          db,
+          collection,
+          encodedDocument,
+        );
       }
-      await db.getAdapter().updateDocument(
-        SYSTEM_CONTEXT,
-        collection.getId(),
-        doc as Doc<IEntity>,
-        skipPermissionsUpdate,
-      );
+      await db
+        .getAdapter()
+        .updateDocument(
+          SYSTEM_CONTEXT,
+          collection.getId(),
+          doc as Doc<IEntity>,
+          skipPermissionsUpdate,
+        );
       await db.purgeCachedDocument(collection.getId(), encodedDocument);
 
       return encodedDocument;
@@ -924,16 +934,22 @@ export class DocumentStore implements DocumentPlane {
             );
           }
 
-          const encodedDocument = await this.internals.encode(db, collection, merged);
+          const encodedDocument = await this.internals.encode(
+            db,
+            collection,
+            merged,
+          );
           processedBatch.push(encodedDocument);
         }
 
-        await db.getAdapter().updateDocuments(
-          SYSTEM_CONTEXT,
-          collection.getId(),
-          encodedUpdates,
-          processedBatch,
-        );
+        await db
+          .getAdapter()
+          .updateDocuments(
+            SYSTEM_CONTEXT,
+            collection.getId(),
+            encodedUpdates,
+            processedBatch,
+          );
       });
 
       for (const doc of batch) {
@@ -1040,11 +1056,9 @@ export class DocumentStore implements DocumentPlane {
       await this.silent(() =>
         deleteDocumentRelationships(db, collection, document),
       );
-      const result = await db.getAdapter().deleteDocument(
-        SYSTEM_CONTEXT,
-        collection.getId(),
-        document,
-      );
+      const result = await db
+        .getAdapter()
+        .deleteDocument(SYSTEM_CONTEXT, collection.getId(), document);
 
       await db.purgeCachedDocument(collection.getId(), id);
 
@@ -1087,11 +1101,9 @@ export class DocumentStore implements DocumentPlane {
           forPermission: PermissionEnum.Delete,
         },
       );
-      const result = await db.getAdapter().deleteDocuments(
-        SYSTEM_CONTEXT,
-        collection.getId(),
-        processedQueries,
-      );
+      const result = await db
+        .getAdapter()
+        .deleteDocuments(SYSTEM_CONTEXT, collection.getId(), processedQueries);
       for (const id of result) {
         await db.purgeCachedDocument(collection.getId(), id);
         await db.silent(() =>
@@ -1237,12 +1249,14 @@ export class DocumentStore implements DocumentPlane {
           }
         }
 
-        await db.getAdapter().deleteDocumentsBySequences(
-          SYSTEM_CONTEXT,
-          collection.getId(),
-          sequences,
-          permissionIds,
-        );
+        await db
+          .getAdapter()
+          .deleteDocumentsBySequences(
+            SYSTEM_CONTEXT,
+            collection.getId(),
+            sequences,
+            permissionIds,
+          );
       });
 
       for (let index = 0; index < batch.length; index++) {
@@ -1254,7 +1268,10 @@ export class DocumentStore implements DocumentPlane {
             this.db.purgeCachedDocument(collection.getId(), document.getId()),
           );
         } else {
-          await this.db.purgeCachedDocument(collection.getId(), document.getId());
+          await this.db.purgeCachedDocument(
+            collection.getId(),
+            document.getId(),
+          );
         }
 
         try {
@@ -1370,7 +1387,11 @@ export class DocumentStore implements DocumentPlane {
         );
       } else {
         old = await this.silent(() =>
-          this.getDocument(SYSTEM_CONTEXT, collection.getId(), document.getId()),
+          this.getDocument(
+            SYSTEM_CONTEXT,
+            collection.getId(),
+            document.getId(),
+          ),
         );
       }
 
@@ -1504,12 +1525,14 @@ export class DocumentStore implements DocumentPlane {
 
     for (const chunk of chunks) {
       const batch = await this.db.withTransaction((db) =>
-        db.getAdapter().createOrUpdateDocuments(
-          SYSTEM_CONTEXT,
-          collection.getId(),
-          attribute,
-          chunk,
-        ),
+        db
+          .getAdapter()
+          .createOrUpdateDocuments(
+            SYSTEM_CONTEXT,
+            collection.getId(),
+            attribute,
+            chunk,
+          ),
       );
 
       for (const change of chunk) {
@@ -1530,7 +1553,10 @@ export class DocumentStore implements DocumentPlane {
 
         if (this.adapter.$sharedTables && this.adapter.$tenantPerDocument) {
           await this.db.withTenant(processedDoc.getTenant(), () =>
-            this.db.purgeCachedDocument(collection.getId(), processedDoc.getId()),
+            this.db.purgeCachedDocument(
+              collection.getId(),
+              processedDoc.getId(),
+            ),
           );
         } else {
           await this.db.purgeCachedDocument(
@@ -1593,10 +1619,7 @@ export class DocumentStore implements DocumentPlane {
       throw new NotFoundException("Attribute not found");
     }
 
-    if (
-      !NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) ||
-      attr.get("array")
-    ) {
+    if (!NUMERIC_ATTRIBUTE_TYPES.has(attr.get("type")) || attr.get("array")) {
       throw new DatabaseException(
         "Attribute must be an integer or float and can not be an array.",
       );
@@ -1820,7 +1843,9 @@ export class DocumentStore implements DocumentPlane {
       queries.push(...(query ?? []));
     }
 
-    const result = await this.silent(() => this.find(ctx, collectionId, queries));
+    const result = await this.silent(() =>
+      this.find(ctx, collectionId, queries),
+    );
     this.trigger(EventsEnum.DocumentFind, result[0]);
 
     if (!result[0]) {
@@ -2158,10 +2183,8 @@ export class DocumentStore implements DocumentPlane {
   }
 }
 
-export interface ProcessedQuery extends Omit<
-  QueryByType,
-  "selections" | "populateQueries"
-> {
+export interface ProcessedQuery
+  extends Omit<QueryByType, "selections" | "populateQueries"> {
   collection: Doc<Collection>;
   selections: string[];
   populateQueries?: PopulateQuery[];

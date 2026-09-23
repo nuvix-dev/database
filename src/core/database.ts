@@ -1,55 +1,19 @@
-import {
-  AttributeEnum,
-  EventsEnum,
-  OnDelete,
-  PermissionEnum,
-  RelationSideEnum,
-} from "./enums.js";
-import {
-  Attribute,
-  Collection,
-  Index,
-  RelationOptions,
-} from "@validators/schema.js";
+import { AttributeEnum, OnDelete, PermissionEnum } from "./enums.js";
+import { Attribute, Collection, Index } from "@validators/schema.js";
 import {
   CreateCollection,
   CreateRelationshipAttribute,
   Filters,
-  QueryByType,
   UpdateCollection,
   UpdateRelationshipAttribute,
 } from "./types.js";
 import { Cache } from "./cache.js";
 import type { CacheDriver } from "@cache/types.js";
 import type { Entities } from "@nuvix/db";
-import type { IEntity } from "types.js";
-import { QueryBuilder } from "@utils/query-builder.js";
-import { Query } from "./query.js";
 import { Doc } from "./doc.js";
-import {
-  AuthorizationException,
-  ConflictException,
-  DatabaseException,
-  DuplicateException,
-  LimitException,
-  NotFoundException,
-  QueryException,
-  StructureException,
-} from "@errors/index.js";
-import { Permissions } from "@validators/permissions.js";
-import { Documents } from "@validators/queries/documents.js";
+import { AuthorizationException } from "@errors/index.js";
 import { authorize, AuthContext, SYSTEM_CONTEXT } from "./auth.js";
-import { ID } from "@utils/id.js";
-import { Structure } from "@validators/structure.js";
 import type { DatabaseAdapter } from "@adapters/interface.js";
-import { MethodType } from "@validators/query/base.js";
-import {
-  createRelationships,
-  deleteDocumentRelationships,
-  handleManyToMany,
-  handleOnDelete,
-  updateDocumentRelationships,
-} from "./document-relationships.js";
 import { Logger, LoggerOptions } from "@utils/logger.js";
 import { SchemaManager } from "./schema-manager.js";
 import { Session } from "./session.js";
@@ -70,22 +34,6 @@ const authorizationError = (
   permissions.length === 0
     ? `No permissions provided for action '${action}'.`
     : `Missing "${action}" permission for role "${permissions[permissions.length - 1]}". Only "${JSON.stringify(roles)}" scopes are allowed and "${JSON.stringify(permissions)}" was given.`;
-
-/**
- * Pure guard: throws an AuthorizationException carrying the legacy message
- * when `authorize(ctx, permissions, action)` denies the action.
- */
-const ensureAuthorized = (
-  ctx: AuthContext,
-  permissions: string[],
-  action: PermissionEnum,
-): void => {
-  if (!authorize(ctx, permissions, action)) {
-    throw new AuthorizationException(
-      authorizationError(action, permissions, ctx.roles),
-    );
-  }
-};
 
 export class Database extends Cache {
   /**
@@ -191,10 +139,7 @@ export class Database extends Cache {
     const roleList: string[] = Array.isArray(roles[0])
       ? (roles[0] as string[])
       : (roles as string[]);
-    return new Session(
-      this,
-      Object.freeze({ roles: Object.freeze(roleList) }),
-    );
+    return new Session(this, Object.freeze({ roles: Object.freeze(roleList) }));
   }
 
   /**
@@ -527,7 +472,6 @@ export class Database extends Cache {
   public get checksRelationshipsExist(): boolean {
     return this.checkRelationshipsExist;
   }
-
 }
 
 export type { ProcessedQuery, PopulateQuery } from "./document-store.js";

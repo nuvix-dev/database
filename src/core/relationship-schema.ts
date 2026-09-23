@@ -175,7 +175,9 @@ export async function createRelationship(
   await db.silent(async () => {
     try {
       await db.withTransaction(async (db) => {
-        await db.system().updateDocument(Base.METADATA, collection.getId(), collection);
+        await db
+          .system()
+          .updateDocument(Base.METADATA, collection.getId(), collection);
         await db
           .system()
           .updateDocument(
@@ -508,7 +510,9 @@ export async function deleteRelationship(
   await db.silent(async () => {
     try {
       await db.withTransaction(async (db) => {
-        await db.system().updateDocument(Base.METADATA, collection.getId(), collection);
+        await db
+          .system()
+          .updateDocument(Base.METADATA, collection.getId(), collection);
         await db
           .system()
           .updateDocument(

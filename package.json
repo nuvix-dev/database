@@ -27,7 +27,7 @@
     "types:init": "bun dist/cli/generate-types.js --init",
     "types:watch": "bun dist/cli/generate-types.js --watch",
     "lint": "bun lint",
-    "format": "bun format"
+    "format": "bun prettier . --write"
   },
   "dependencies": {},
   "files": [

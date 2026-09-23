@@ -123,28 +123,12 @@ describe("SQLite relationship parity", () => {
           newTwoWayKey: `${inverse}_renamed`,
         });
 
-        const firstColumns = await database
-          .getAdapter()
-          .$client.query<{ name: string }>(
-            "SELECT name FROM pragma_table_info(?)",
-            [
-              SQLiteSqlBuilder.getTableName(
-                { schema: "main", namespace: "relationship-schema" },
-                first,
-              ),
-            ],
-          );
-        const secondColumns = await database
-          .getAdapter()
-          .$client.query<{ name: string }>(
-            "SELECT name FROM pragma_table_info(?)",
-            [
-              SQLiteSqlBuilder.getTableName(
-                { schema: "main", namespace: "relationship-schema" },
-                second,
-              ),
-            ],
-          );
+        const firstColumns = await database.getAdapter().$client.query<{
+          name: string;
+        }>("SELECT name FROM pragma_table_info(?)", [SQLiteSqlBuilder.getTableName({ schema: "main", namespace: "relationship-schema" }, first)]);
+        const secondColumns = await database.getAdapter().$client.query<{
+          name: string;
+        }>("SELECT name FROM pragma_table_info(?)", [SQLiteSqlBuilder.getTableName({ schema: "main", namespace: "relationship-schema" }, second)]);
 
         // Assert
         const firstNames = firstColumns.rows.map(({ name }) => name);
@@ -166,17 +150,9 @@ describe("SQLite relationship parity", () => {
         ).toBe(true);
 
         await database.deleteRelationship(first, `${key}_renamed`);
-        const deletedFirstColumns = await database
-          .getAdapter()
-          .$client.query<{ name: string }>(
-            "SELECT name FROM pragma_table_info(?)",
-            [
-              SQLiteSqlBuilder.getTableName(
-                { schema: "main", namespace: "relationship-schema" },
-                first,
-              ),
-            ],
-          );
+        const deletedFirstColumns = await database.getAdapter().$client.query<{
+          name: string;
+        }>("SELECT name FROM pragma_table_info(?)", [SQLiteSqlBuilder.getTableName({ schema: "main", namespace: "relationship-schema" }, first)]);
         expect(deletedFirstColumns.rows.map(({ name }) => name)).not.toContain(
           `${key}_renamed`,
         );
@@ -217,12 +193,9 @@ describe("SQLite relationship parity", () => {
         twoWayKey: "posts",
         twoWay: true,
       });
-      const firstLookup = await database
-        .getAdapter()
-        .$client.query<{ name: string }>(
-          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?",
-          [expected],
-        );
+      const firstLookup = await database.getAdapter().$client.query<{
+        name: string;
+      }>("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?", [expected]);
 
       // Assert
       expect(

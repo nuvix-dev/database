@@ -100,7 +100,9 @@ const user = await session.createDocument(
 const retrieved = await session.getDocument("users", user.getId());
 
 // Query documents
-const users = await session.find("users", (qb) => qb.equal("age", 30).limit(10));
+const users = await session.find("users", (qb) =>
+  qb.equal("age", 30).limit(10),
+);
 
 // Update a document
 await session.updateDocument(

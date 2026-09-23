@@ -38,7 +38,9 @@ const writeMeta = { schema: "app", namespace: "writes" };
 const writeTable = (name: string): string =>
   SQLiteSqlBuilder.getSQLTable(writeMeta, name);
 
-async function createDocumentAdapter(sharedTables = false): Promise<SQLiteAdapter> {
+async function createDocumentAdapter(
+  sharedTables = false,
+): Promise<SQLiteAdapter> {
   const adapter = new SQLiteAdapter(":memory:");
   adapter.setMeta({
     schema: "app",
@@ -46,7 +48,10 @@ async function createDocumentAdapter(sharedTables = false): Promise<SQLiteAdapte
     sharedTables,
     tenantId: sharedTables ? 1 : undefined,
   });
-  await adapter.createCollection({ name: "users", attributes: documentAttributes });
+  await adapter.createCollection({
+    name: "users",
+    attributes: documentAttributes,
+  });
   return adapter;
 }
 
@@ -201,7 +206,11 @@ describe("SQLiteAdapter", () => {
       const first = document("one", "One", 1);
       const rest = [document("two", "Two", 2), document("three", "Three", 3)];
 
-      expect((await adapter.createDocument(SYSTEM_CONTEXT, "users", first)).getSequence()).toBe(1);
+      expect(
+        (
+          await adapter.createDocument(SYSTEM_CONTEXT, "users", first)
+        ).getSequence(),
+      ).toBe(1);
       await adapter.createDocuments(SYSTEM_CONTEXT, "users", rest);
 
       expect(rest.map((item) => item.getSequence())).toEqual([2, 3]);
@@ -211,7 +220,9 @@ describe("SQLiteAdapter", () => {
       const permissions = await adapter.$client.query<{
         _document: number;
         _permissions: string;
-      }>(`SELECT "_document", "_permissions" FROM ${writeTable("users_perms")} ORDER BY "_document"`);
+      }>(
+        `SELECT "_document", "_permissions" FROM ${writeTable("users_perms")} ORDER BY "_document"`,
+      );
       expect(main.rows[0]?.count).toBe(3);
       expect(permissions.rows.map((row) => row._document)).toEqual([1, 2, 3]);
       expect(JSON.parse(permissions.rows[0]!._permissions)).toEqual(["any"]);
@@ -223,10 +234,12 @@ describe("SQLiteAdapter", () => {
   test("uses singular and plural create lifecycle events", async () => {
     const adapter = await createDocumentAdapter();
     const events: EventsEnum[] = [];
-    const record = (event: EventsEnum) => (sql: string): string => {
-      events.push(event);
-      return sql;
-    };
+    const record =
+      (event: EventsEnum) =>
+      (sql: string): string => {
+        events.push(event);
+        return sql;
+      };
     adapter.before(
       EventsEnum.DocumentCreate,
       "test-document-create",
@@ -289,7 +302,11 @@ describe("SQLiteAdapter", () => {
     try {
       await adapter.$client.query(`DROP TABLE ${writeTable("users_perms")}`);
       await expect(
-        adapter.createDocument(SYSTEM_CONTEXT, "users", document("one", "One", 1)),
+        adapter.createDocument(
+          SYSTEM_CONTEXT,
+          "users",
+          document("one", "One", 1),
+        ),
       ).rejects.toThrow();
       const result = await adapter.$client.query<{ count: number }>(
         `SELECT COUNT(*) AS count FROM ${writeTable("users")}`,
@@ -334,9 +351,14 @@ describe("SQLiteAdapter", () => {
       const updated = await adapter.$client.query<{
         name: string;
         _permissions: string;
-      }>(`SELECT "name", "_permissions" FROM ${writeTable("users")} WHERE "_id" = ?`, [first.getSequence()]);
+      }>(
+        `SELECT "name", "_permissions" FROM ${writeTable("users")} WHERE "_id" = ?`,
+        [first.getSequence()],
+      );
       expect(updated.rows[0]?.name).toBe("Updated");
-      expect(JSON.parse(updated.rows[0]!._permissions)).toEqual(["update(\"any\")"]);
+      expect(JSON.parse(updated.rows[0]!._permissions)).toEqual([
+        'update("any")',
+      ]);
 
       const affected = await adapter.updateDocuments(
         SYSTEM_CONTEXT,
@@ -360,7 +382,9 @@ describe("SQLiteAdapter", () => {
       );
       expect(score.rows[0]?.score).toBe(5);
 
-      expect(await adapter.deleteDocument(SYSTEM_CONTEXT, "users", first)).toBe(true);
+      expect(await adapter.deleteDocument(SYSTEM_CONTEXT, "users", first)).toBe(
+        true,
+      );
       expect(
         await adapter.deleteDocumentsBySequences(
           SYSTEM_CONTEXT,
@@ -421,7 +445,10 @@ describe("SQLiteAdapter", () => {
       await adapter.createOrUpdateDocuments(SYSTEM_CONTEXT, "users", "score", [
         { old: replacement, new: increment },
       ]);
-      const stored = await adapter.$client.query<{ name: string; score: number }>(
+      const stored = await adapter.$client.query<{
+        name: string;
+        score: number;
+      }>(
         `SELECT "name", "score" FROM ${writeTable("users")} WHERE "_uid" = ?`,
         ["one"],
       );
@@ -515,7 +542,10 @@ describe("SQLiteAdapter", () => {
         document("two", "Keep", 2),
       ]);
       const query = {
-        collection: new Doc<Collection>({ $id: "users", attributes: documentAttributes }),
+        collection: new Doc<Collection>({
+          $id: "users",
+          attributes: documentAttributes,
+        }),
         filters: [Query.equal("name", ["Delete"])],
         selections: [],
         populateQueries: [],
@@ -527,7 +557,9 @@ describe("SQLiteAdapter", () => {
         skipAuth: true,
       } satisfies ProcessedQuery;
 
-      expect(await adapter.deleteDocuments(SYSTEM_CONTEXT, "users", query)).toEqual(["one"]);
+      expect(
+        await adapter.deleteDocuments(SYSTEM_CONTEXT, "users", query),
+      ).toEqual(["one"]);
       const rows = await adapter.$client.query<{ _uid: string }>(
         `SELECT "_uid" FROM ${writeTable("users")}`,
       );
@@ -558,7 +590,10 @@ describe("SQLiteAdapter", () => {
       ]);
       await adapter.deleteDocument(SYSTEM_CONTEXT, "users", tenantOne);
 
-      const rows = await adapter.$client.query<{ _tenant: number; name: string }>(
+      const rows = await adapter.$client.query<{
+        _tenant: number;
+        name: string;
+      }>(
         `SELECT "_tenant", "name" FROM ${writeTable("users")} ORDER BY "_tenant"`,
       );
       const permissions = await adapter.$client.query<{ _tenant: number }>(
@@ -611,9 +646,7 @@ describe("SQLiteAdapter", () => {
         [2],
       );
       expect(stored.rows[0]?.name).toBe("Tenant Two");
-      expect(JSON.parse(stored.rows[0]!._permissions)).toEqual([
-        'read("any")',
-      ]);
+      expect(JSON.parse(stored.rows[0]!._permissions)).toEqual(['read("any")']);
       expect(JSON.parse(permission.rows[0]!._permissions)).toEqual(["any"]);
     } finally {
       await adapter.$client.disconnect();
@@ -680,7 +713,11 @@ describe("SQLiteAdapter", () => {
       await adapter.createDocument(SYSTEM_CONTEXT, "users", readable);
 
       expect(
-        await adapter.find({ roles: ["user:reader"] }, "users", readQuery(secured)),
+        await adapter.find(
+          { roles: ["user:reader"] },
+          "users",
+          readQuery(secured),
+        ),
       ).toHaveLength(1);
       expect(
         await adapter.find(
@@ -706,10 +743,12 @@ describe("SQLiteAdapter", () => {
   test("applies write lifecycle transformations to bulk creates and upserts", async () => {
     const adapter = await createDocumentAdapter();
     const events: EventsEnum[] = [];
-    const record = (event: EventsEnum) => (sql: string): string => {
-      events.push(event);
-      return sql;
-    };
+    const record =
+      (event: EventsEnum) =>
+      (sql: string): string => {
+        events.push(event);
+        return sql;
+      };
     adapter.before(
       EventsEnum.DocumentsCreate,
       "test-documents-create",
@@ -770,15 +809,15 @@ describe("SQLiteAdapter", () => {
           namespace: "transaction",
           metadata: { request: "transaction" },
         });
-        transaction.before(EventsEnum.CollectionCreate, "transaction", (sql) =>
-          `transaction:${sql}`,
+        transaction.before(
+          EventsEnum.CollectionCreate,
+          "transaction",
+          (sql) => `transaction:${sql}`,
         );
         expect(transaction.$namespace).toBe("transaction");
         expect(
           transaction.trigger(EventsEnum.CollectionCreate, "SELECT 1"),
-        ).toContain(
-          "transaction:",
-        );
+        ).toContain("transaction:");
       });
 
       expect(adapter.$namespace).toBe("parent");

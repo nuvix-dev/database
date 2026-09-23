@@ -2,10 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database as SQLiteDatabase } from "bun:sqlite";
 import { processSQLiteException } from "@adapters/error-mapper.js";
 import { SQLiteSqlBuilder } from "@adapters/sqlite-sql-builder.js";
-import {
-  bindSQLiteValue,
-  decodeSQLiteValue,
-} from "@adapters/sqlite-values.js";
+import { bindSQLiteValue, decodeSQLiteValue } from "@adapters/sqlite-values.js";
 import { Doc } from "@core/doc.js";
 import { AttributeEnum, IndexEnum } from "@core/enums.js";
 import { Query } from "@core/query.js";
@@ -22,9 +19,9 @@ const databases: Database[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    databases.splice(0).map((database) =>
-      database.getAdapter().$client.disconnect(),
-    ),
+    databases
+      .splice(0)
+      .map((database) => database.getAdapter().$client.disconnect()),
   );
 });
 
@@ -239,23 +236,14 @@ describe("SQLite query behavior", () => {
 
     // Act
     const andResult = await names(database, [
-      Query.and([
-        Query.startsWith("name", "Al"),
-        Query.greaterThan("age", 10),
-      ]),
+      Query.and([Query.startsWith("name", "Al"), Query.greaterThan("age", 10)]),
     ]);
     const orResult = await names(database, [
-      Query.or([
-        Query.isNull("nickname"),
-        Query.equal("name", ["Gamma"]),
-      ]),
+      Query.or([Query.isNull("nickname"), Query.equal("name", ["Gamma"])]),
       Query.orderAsc("age"),
     ]);
     const noMatch = await names(database, [
-      Query.and([
-        Query.equal("active", [false]),
-        Query.lessThan("age", 20),
-      ]),
+      Query.and([Query.equal("active", [false]), Query.lessThan("age", 20)]),
     ]);
 
     // Assert
@@ -269,12 +257,14 @@ describe("SQLite query behavior", () => {
     const database = await setupQueryDatabase();
 
     // Act
-    const documents = await database.system().find("records", [
-      Query.select(["name"]),
-      Query.orderDesc("age"),
-      Query.offset(1),
-      Query.limit(2),
-    ]);
+    const documents = await database
+      .system()
+      .find("records", [
+        Query.select(["name"]),
+        Query.orderDesc("age"),
+        Query.offset(1),
+        Query.limit(2),
+      ]);
 
     // Assert
     expect(documents.map((document) => document.get("name"))).toEqual([
@@ -287,21 +277,25 @@ describe("SQLite query behavior", () => {
   test("paginates after and before cursor documents without overlap", async () => {
     // Arrange
     const database = await setupQueryDatabase();
-    const ordered = await database.system().find("records", [
-      Query.orderAsc("age"),
-    ]);
+    const ordered = await database
+      .system()
+      .find("records", [Query.orderAsc("age")]);
 
     // Act
-    const after = await database.system().find("records", [
-      Query.orderAsc("age"),
-      Query.cursorAfter(ordered[1]!),
-      Query.limit(2),
-    ]);
-    const before = await database.system().find("records", [
-      Query.orderAsc("age"),
-      Query.cursorBefore(ordered[2]!),
-      Query.limit(2),
-    ]);
+    const after = await database
+      .system()
+      .find("records", [
+        Query.orderAsc("age"),
+        Query.cursorAfter(ordered[1]!),
+        Query.limit(2),
+      ]);
+    const before = await database
+      .system()
+      .find("records", [
+        Query.orderAsc("age"),
+        Query.cursorBefore(ordered[2]!),
+        Query.limit(2),
+      ]);
 
     // Assert
     expect(after.map((document) => document.get("name"))).toEqual([
@@ -378,7 +372,9 @@ describe("SQLite value behavior", () => {
       expect(row["nothing"]).toBeNull();
       expect(row["count_value"]).toBe(42.5);
       expect(row["text_value"]).toBe("plain text");
-      expect(Array.from(row["blob_value"] as Uint8Array)).toEqual([0, 127, 255]);
+      expect(Array.from(row["blob_value"] as Uint8Array)).toEqual([
+        0, 127, 255,
+      ]);
     } finally {
       database.close();
     }
@@ -480,7 +476,7 @@ describe("SQLite unsupported query behavior", () => {
     // Act and assert
     await expect(
       database.system().find("records", [Query.search("name", "Alpha")]),
-    ).rejects.toThrow('requires a fulltext index');
+    ).rejects.toThrow("requires a fulltext index");
     expect(() =>
       SQLiteSqlBuilder.buildQueryCondition(
         { schema: "main", namespace: "query-values-errors" },

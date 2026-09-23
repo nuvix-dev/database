@@ -12,9 +12,9 @@ const databases: Database[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    databases.splice(0).map((database) =>
-      database.getAdapter().$client.disconnect(),
-    ),
+    databases
+      .splice(0)
+      .map((database) => database.getAdapter().$client.disconnect()),
   );
 });
 

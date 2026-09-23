@@ -197,7 +197,9 @@ export class SqlBuilder {
       case QueryType.And:
         const conditions: string[] = [];
         for (const q of query.getValues() as Query[]) {
-          conditions.push(SqlBuilder.getSQLCondition(meta, q, binds, supportForJSONOverlaps));
+          conditions.push(
+            SqlBuilder.getSQLCondition(meta, q, binds, supportForJSONOverlaps),
+          );
         }
 
         const methodStr = method.toUpperCase();
@@ -389,7 +391,12 @@ export class SqlBuilder {
         );
       } else {
         conditions.push(
-          SqlBuilder.getSQLCondition(meta, query, binds, supportForJSONOverlaps),
+          SqlBuilder.getSQLCondition(
+            meta,
+            query,
+            binds,
+            supportForJSONOverlaps,
+          ),
         );
       }
     }
@@ -462,7 +469,9 @@ export class SqlBuilder {
     for (let key of selections) {
       switch (key) {
         case "$schema":
-          projected.push(`'${SqlBuilder.schemaOf(meta)}' AS ${SqlBuilder.quote(key)}`);
+          projected.push(
+            `'${SqlBuilder.schemaOf(meta)}' AS ${SqlBuilder.quote(key)}`,
+          );
           break;
         case "$collection":
           projected.push(`'${collection}' AS ${SqlBuilder.quote(key)}`);
@@ -780,7 +789,13 @@ export class SqlBuilder {
     if (meta.sharedTables) {
       params.push(meta.tenantId);
       conditions.push(
-        SqlBuilder.getTenantQuery(meta, collection.getId(), tableAlias, undefined, ""),
+        SqlBuilder.getTenantQuery(
+          meta,
+          collection.getId(),
+          tableAlias,
+          undefined,
+          "",
+        ),
       );
     }
 
@@ -873,7 +888,9 @@ export class SqlBuilder {
         }
 
         if (meta.sharedTables) {
-          joins.push(SqlBuilder.getTenantQuery(meta, relatedTableName, relationAlias));
+          joins.push(
+            SqlBuilder.getTenantQuery(meta, relatedTableName, relationAlias),
+          );
           params.push(meta.tenantId);
         }
       }
@@ -1000,8 +1017,12 @@ export class SqlBuilder {
             "junction collection is required for many to many relation.",
           );
         const junctionTable = SqlBuilder.getSQLTable(meta, junctionCollection);
-        const parentJoinKey = SqlBuilder.quote(SqlBuilder.sanitize(relationshipKey));
-        const relationJoinKey = SqlBuilder.quote(SqlBuilder.sanitize(twoWayKey));
+        const parentJoinKey = SqlBuilder.quote(
+          SqlBuilder.sanitize(relationshipKey),
+        );
+        const relationJoinKey = SqlBuilder.quote(
+          SqlBuilder.sanitize(twoWayKey),
+        );
 
         return `EXISTS (
                     SELECT 1
