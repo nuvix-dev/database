@@ -324,10 +324,10 @@ export class Filter extends Base {
         validator = new Text(attributeSchema.size ?? 0, 0);
         break;
       case AttributeEnum.Integer:
-        validator = new Integer();
+        validator = new Integer(true);
         break;
       case AttributeEnum.Float:
-        validator = new FloatValidator();
+        validator = new FloatValidator(true);
         break;
       case AttributeEnum.Boolean:
         validator = new Boolean();

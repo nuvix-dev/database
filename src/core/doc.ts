@@ -237,7 +237,8 @@ export class Doc<
    * Gets the value of $sequence.
    */
   public getSequence(): number {
-    return this.get("$sequence") as number;
+    const sequence = this.get("$sequence");
+    return sequence != null ? Number(sequence) : (sequence as unknown as number);
   }
 
   /**
