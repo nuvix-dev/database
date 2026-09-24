@@ -27,14 +27,14 @@ export type Filter<T = FilterValue, U = FilterValue, D = Doc> = {
   encode: (
     value: T,
     document: D,
-    db: Session,
-    Database: any,
+    db?: Session,
+    Database?: any,
   ) => U | Promise<U>;
   decode: (
     value: U,
     document: D,
-    db: Session,
-    Database: any,
+    db?: Session,
+    Database?: any,
   ) => T | Promise<T>;
 };
 
