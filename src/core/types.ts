@@ -1,5 +1,5 @@
 import { Attribute, Index } from "@validators/schema.js";
-import type { Database } from "./database.js";
+import type { Session } from "./session.js";
 import type { Doc } from "./doc.js";
 import { Permission } from "@utils/permission.js";
 import { Query } from "./query.js";
@@ -24,8 +24,18 @@ export type FilterValue =
   | FilterValue[];
 
 export type Filter<T = FilterValue, U = FilterValue, D = Doc> = {
-  encode: (value: T, document: D, db: Database) => U | Promise<U>;
-  decode: (value: U, document: D, db: Database) => T | Promise<T>;
+  encode: (
+    value: T,
+    document: D,
+    db: Session,
+    Database: any,
+  ) => U | Promise<U>;
+  decode: (
+    value: U,
+    document: D,
+    db: Session,
+    Database: any,
+  ) => T | Promise<T>;
 };
 
 export type Filters = Record<string, Filter>;

@@ -976,14 +976,25 @@ export abstract class Base<
     }
 
     try {
+      const session =
+        typeof (this as any).system === "function"
+          ? (this as any).system()
+          : (this as any);
+      const DatabaseClass = (this as any).constructor;
       if (this.instanceFilters[filter]) {
         value = this.instanceFilters[filter].encode(
           value,
           document,
-          this as any,
+          session,
+          DatabaseClass,
         );
       } else {
-        value = Base.filters[filter]!.encode(value, document, this as any);
+        value = Base.filters[filter]!.encode(
+          value,
+          document,
+          session,
+          DatabaseClass,
+        );
       }
       if (value instanceof Promise) {
         value = await value;
@@ -1015,14 +1026,25 @@ export abstract class Base<
     }
 
     try {
+      const session =
+        typeof (this as any).system === "function"
+          ? (this as any).system()
+          : (this as any);
+      const DatabaseClass = (this as any).constructor;
       if (this.instanceFilters[filter]) {
         value = this.instanceFilters[filter].decode(
           value,
           document,
-          this as any,
+          session,
+          DatabaseClass,
         );
       } else {
-        value = Base.filters[filter]!.decode(value, document, this as any);
+        value = Base.filters[filter]!.decode(
+          value,
+          document,
+          session,
+          DatabaseClass,
+        );
       }
       if (value instanceof Promise) {
         value = await value;

@@ -291,4 +291,58 @@ describe("Database with SQLiteAdapter", () => {
       database.system().getDocument("users", created.getId(), [], true),
     ).resolves.toMatchObject({});
   });
+
+  test("passes session db and Database class to instance and static filters", async () => {
+    const database = await setup();
+    let encodeDbArg: any = null;
+    let encodeDatabaseArg: any = null;
+    let decodeDbArg: any = null;
+    let decodeDatabaseArg: any = null;
+
+    database.addFilter("customUpper", {
+      encode(value, _doc, db, DatabaseClass) {
+        encodeDbArg = db;
+        encodeDatabaseArg = DatabaseClass;
+        return typeof value === "string" ? value.toUpperCase() : value;
+      },
+      decode(value, _doc, db, DatabaseClass) {
+        decodeDbArg = db;
+        decodeDatabaseArg = DatabaseClass;
+        return typeof value === "string" ? value.toLowerCase() : value;
+      },
+    });
+
+    await database.createCollection({
+      id: "filtered_users",
+      attributes: [
+        new Doc({
+          $id: "title",
+          key: "title",
+          type: AttributeEnum.String,
+          size: 128,
+          required: true,
+          filters: ["customUpper"],
+        }),
+      ],
+      permissions: [Permission.create(Role.any()), Permission.read(Role.any())],
+      documentSecurity: false,
+    });
+
+    const session = database.system();
+    const doc = await session.createDocument(
+      "filtered_users",
+      new Doc({ title: "Alice" }),
+    );
+
+    expect(encodeDbArg).toBeDefined();
+    expect(typeof encodeDbArg.find).toBe("function");
+    expect(typeof encodeDbArg.getDocument).toBe("function");
+    expect(encodeDatabaseArg).toBe(database.constructor);
+
+    const fetched = await session.getDocument("filtered_users", doc.getId());
+    expect(decodeDbArg).toBeDefined();
+    expect(typeof decodeDbArg.find).toBe("function");
+    expect(decodeDatabaseArg).toBe(database.constructor);
+    expect(fetched.get("title")).toBe("alice");
+  });
 });
