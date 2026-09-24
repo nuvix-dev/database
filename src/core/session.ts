@@ -26,12 +26,7 @@ import type { Collection } from "@validators/schema.js";
 import { PermissionEnum } from "./enums.js";
 import { documentPlane } from "./document-plane.js";
 
-type DynamicCollection<C extends string> =
-  Exclude<keyof Entities, "_metadata"> extends never
-    ? C
-    : string extends C
-      ? C
-      : never;
+type DynamicCollection<C extends string> = C;
 type SessionCollection<C extends string> = C extends keyof Entities
   ? C
   : DynamicCollection<C>;
